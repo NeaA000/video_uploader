@@ -1,4 +1,4 @@
-# Streamlit 설정 파일 (Railway 최적화)
+# Streamlit 설정 파일 (Railway 최적화) - 오류 수정 완료
 [server]
 headless = true
 port = 8080
@@ -29,8 +29,8 @@ secondaryBackgroundColor = "#f0f2f6"
 textColor = "#262730"
 font = "sans serif"
 
-# Railway 메모리 최적화
+# Railway 메모리 최적화 (수정됨)
 [global]
-dataFrameSerialization = "legacy"  # 메모리 사용량 감소
+# dataFrameSerialization = "legacy"  # 이 라인 제거! (deprecated)
 showWarningOnDirectExecution = false
 suppressDeprecationWarnings = true
