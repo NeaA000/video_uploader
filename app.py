@@ -1,4 +1,4 @@
-# app.py - 완전한 Flask 백엔드 (실제 업로드 처리)
+# app.py - 수정된 Flask 백엔드 (단일 QR 코드 및 언어별 분기)
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
 import os
 import tempfile
@@ -49,6 +49,10 @@ except ImportError as e:
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-railway-2024')
 
+# 브런치 도메인 설정
+BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'jwvduc.app.link')
+BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
+
 # Railway 최적화 설정
 app.config.update(
     MAX_CONTENT_LENGTH=5 * 1024 * 1024 * 1024,  # 5GB
@@ -82,6 +86,16 @@ service_init_attempted = False
 # 업로드 상태 추적
 upload_status = {}
 upload_lock = threading.Lock()
+
+# 지원 언어 정의
+SUPPORTED_LANGUAGES = {
+    'ko': '한국어',
+    'en': 'English',
+    'zh': '中文',
+    'vi': 'Tiếng Việt',
+    'th': 'ไทย',
+    'ja': '日本語'
+}
 
 def safe_get_service_instances():
     """Railway 안전한 서비스 인스턴스 획득"""
@@ -146,7 +160,9 @@ def health_check():
             'service_init_attempted': service_init_attempted,
             'active_uploads': len(upload_status),
             'python_version': sys.version.split()[0],
-            'flask_ready': True
+            'flask_ready': True,
+            'brunch_domain': BRUNCH_DOMAIN,
+            'single_qr_mode': True
         }
         
         return jsonify(health_status), 200
@@ -176,7 +192,7 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_video():
-    """완전한 비디오 업로드 처리"""
+    """완전한 비디오 업로드 처리 - 단일 QR 코드"""
     try:
         # 서비스 인스턴스 확인
         uploader, translator = safe_get_service_instances()
@@ -288,6 +304,204 @@ def upload_video():
         flash(f'업로드 중 오류가 발생했습니다: {str(e)}', 'error')
         return redirect(url_for('index'))
 
+# 🆕 단일 QR 코드와 언어별 분기를 지원하는 영상 시청 페이지
+@app.route('/watch/<video_id>')
+def watch_video(video_id):
+    """단일 QR 코드와 언어별 분기를 지원하는 영상 시청 페이지"""
+    try:
+        # 서비스 인스턴스 확인
+        uploader, translator = safe_get_service_instances()
+        if not uploader:
+            return render_template('error.html', 
+                                 error_code=500, 
+                                 error_message="서비스가 준비되지 않았습니다"), 500
+        
+        # 앱에서 요청한 언어 확인 (기본값: 한국어)
+        requested_lang = request.args.get('lang', 'ko')
+        if requested_lang not in SUPPORTED_LANGUAGES:
+            requested_lang = 'ko'
+        
+        # User-Agent 확인 (앱 vs 웹 브라우저)
+        user_agent = request.headers.get('User-Agent', '').lower()
+        is_app_request = any(keyword in user_agent for keyword in ['dart', 'flutter', 'okhttp', 'mobile'])
+        
+        # 비디오 상태 확인
+        video_status = uploader.get_upload_status(video_id)
+        if not video_status['success']:
+            if is_app_request:
+                return jsonify({
+                    'success': False,
+                    'error': 'Video not found',
+                    'message': '요청한 영상을 찾을 수 없습니다'
+                }), 404
+            else:
+                return render_template('error.html', 
+                                     error_code=404, 
+                                     error_message="요청한 영상을 찾을 수 없습니다"), 404
+        
+        video_data = video_status
+        
+        # 🔍 언어별 영상 확인 및 URL 결정
+        actual_language = requested_lang
+        video_url = None
+        has_language_video = False
+        language_video_info = {}
+        
+        # 언어별 영상 데이터 확인
+        language_videos = video_data.get('language_videos', {})
+        
+        if requested_lang != 'ko' and requested_lang in language_videos:
+            # 요청한 언어의 영상이 있는 경우
+            lang_video_data = language_videos[requested_lang]
+            video_url = lang_video_data.get('video_url', '')
+            
+            if video_url:
+                has_language_video = True
+                language_video_info = {
+                    'language_code': requested_lang,
+                    'language_name': SUPPORTED_LANGUAGES[requested_lang],
+                    'duration': lang_video_data.get('duration_string', ''),
+                    'file_size': lang_video_data.get('file_size', 0),
+                    'upload_date': lang_video_data.get('upload_date', '')
+                }
+                logger.info(f"🌍 언어별 영상 제공: {video_id} ({requested_lang})")
+            else:
+                # URL이 없으면 한국어로 폴백
+                actual_language = 'ko'
+        else:
+            # 요청한 언어가 없거나 한국어인 경우
+            actual_language = 'ko'
+        
+        # 한국어 또는 폴백 영상 URL
+        if not video_url and 'ko' in language_videos:
+            korean_video_data = language_videos['ko']
+            video_url = korean_video_data.get('video_url', '')
+        
+        # 최종 폴백 (레거시 지원)
+        if not video_url:
+            video_url = video_data.get('video_url', f"https://{BRUNCH_DOMAIN}/watch/{video_id}")
+        
+        # 🔥 앱용 JSON 응답
+        if is_app_request:
+            response_data = {
+                'success': True,
+                'video_id': video_id,
+                'title': video_data.get('group_name', '제목 없음'),
+                'video_url': video_url,
+                'qr_url': video_data.get('qr_url', ''),
+                'thumbnail_url': video_data.get('thumbnail_url', ''),
+                'requested_language': requested_lang,
+                'actual_language': actual_language,
+                'language_name': SUPPORTED_LANGUAGES.get(actual_language, '한국어'),
+                'has_language_video': has_language_video,
+                'supported_languages': list(SUPPORTED_LANGUAGES.keys()),
+                'brunch_domain': video_data.get('brunch_domain', BRUNCH_DOMAIN),
+                'single_qr_link': f"https://{BRUNCH_DOMAIN}/watch/{video_id}",
+                'metadata': {
+                    'upload_date': video_data.get('upload_date', ''),
+                    'category': f"{video_data.get('main_category', '')} > {video_data.get('sub_category', '')} > {video_data.get('sub_sub_category', '')}",
+                    'duration': language_video_info.get('duration', '0:00'),
+                    'file_size': language_video_info.get('file_size', 0)
+                }
+            }
+            
+            # 언어별 영상 정보 추가
+            if language_video_info:
+                response_data['language_video_info'] = language_video_info
+            
+            # 자동 폴백 안내 (필요 시)
+            if requested_lang != actual_language:
+                response_data['fallback_info'] = {
+                    'requested': SUPPORTED_LANGUAGES[requested_lang],
+                    'provided': SUPPORTED_LANGUAGES[actual_language],
+                    'reason': 'language_not_available'
+                }
+            
+            return jsonify(response_data), 200
+        
+        # 🌐 웹 브라우저용 HTML 응답
+        else:
+            return render_template('watch.html',
+                                 video_id=video_id,
+                                 video_data=video_data,
+                                 video_url=video_url,
+                                 requested_language=requested_lang,
+                                 actual_language=actual_language,
+                                 has_language_video=has_language_video,
+                                 supported_languages=SUPPORTED_LANGUAGES,
+                                 brunch_domain=video_data.get('brunch_domain', BRUNCH_DOMAIN),
+                                 single_qr_link=f"https://{BRUNCH_DOMAIN}/watch/{video_id}")
+        
+    except Exception as e:
+        logger.error(f"영상 시청 페이지 오류: {e}")
+        if 'is_app_request' in locals() and is_app_request:
+            return jsonify({
+                'success': False,
+                'error': 'Video loading failed',
+                'message': '영상 로드 중 오류가 발생했습니다',
+                'details': str(e)
+            }), 500
+        else:
+            return render_template('error.html', 
+                                 error_code=500, 
+                                 error_message=f"영상 로드 중 오류: {str(e)}"), 500
+
+# 🆕 언어별 영상 지원 현황 API
+@app.route('/api/videos/<video_id>/languages', methods=['GET'])
+def get_video_languages(video_id):
+    """특정 영상의 사용 가능한 언어 목록 조회"""
+    try:
+        uploader, translator = safe_get_service_instances()
+        if not uploader:
+            return jsonify({'error': '서비스가 준비되지 않았습니다'}), 503
+        
+        video_status = uploader.get_upload_status(video_id)
+        if not video_status['success']:
+            return jsonify({'error': '영상을 찾을 수 없습니다'}), 404
+        
+        # 기본 한국어는 항상 사용 가능
+        available_languages = {'ko': True}
+        language_details = {}
+        
+        # 언어별 영상 확인
+        language_videos = video_status.get('language_videos', {})
+        for lang_code in SUPPORTED_LANGUAGES.keys():
+            if lang_code != 'ko':
+                if lang_code in language_videos:
+                    lang_data = language_videos[lang_code]
+                    available_languages[lang_code] = bool(lang_data.get('video_url'))
+                    if available_languages[lang_code]:
+                        language_details[lang_code] = {
+                            'duration': lang_data.get('duration_string', ''),
+                            'file_size': lang_data.get('file_size', 0),
+                            'upload_date': lang_data.get('upload_date', '')
+                        }
+                else:
+                    available_languages[lang_code] = False
+        
+        # 한국어 정보 추가
+        if 'ko' in language_videos:
+            ko_data = language_videos['ko']
+            language_details['ko'] = {
+                'duration': ko_data.get('duration_string', ''),
+                'file_size': ko_data.get('file_size', 0),
+                'upload_date': ko_data.get('upload_date', '')
+            }
+        
+        return jsonify({
+            'video_id': video_id,
+            'available_languages': available_languages,
+            'language_details': language_details,
+            'supported_languages': SUPPORTED_LANGUAGES,
+            'total_available': len([lang for lang, available in available_languages.items() if available]),
+            'single_qr_link': f"https://{BRUNCH_DOMAIN}/watch/{video_id}",
+            'brunch_domain': BRUNCH_DOMAIN
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"언어 목록 조회 실패: {e}")
+        return jsonify({'error': '언어 목록을 가져올 수 없습니다', 'details': str(e)}), 500
+
 @app.route('/api/translate', methods=['POST'])
 def translate_text():
     """번역 API"""
@@ -338,7 +552,9 @@ def get_existing_videos():
         return jsonify({
             'success': True,
             'videos': videos_data,
-            'total': len(videos_data)
+            'total': len(videos_data),
+            'brunch_domain': BRUNCH_DOMAIN,
+            'single_qr_mode': True
         })
 
     except Exception as e:
@@ -368,6 +584,12 @@ def upload_language_video():
             return jsonify({
                 'success': False,
                 'error': '그룹 ID와 언어 코드가 필요합니다'
+            }), 400
+        
+        if language_code not in SUPPORTED_LANGUAGES:
+            return jsonify({
+                'success': False,
+                'error': f'지원되지 않는 언어입니다: {language_code}'
             }), 400
         
         # 파일 검증
@@ -406,6 +628,11 @@ def upload_language_video():
             
             if result['success']:
                 logger.info(f"언어별 영상 업로드 성공: {group_id} ({language_code})")
+                
+                # 결과에 단일 QR 정보 추가
+                result['single_qr_link'] = f"https://{BRUNCH_DOMAIN}/watch/{group_id}"
+                result['brunch_domain'] = BRUNCH_DOMAIN
+                
                 return jsonify(result)
             else:
                 logger.error(f"언어별 영상 업로드 실패: {result.get('error', '알 수 없는 오류')}")
@@ -418,13 +645,10 @@ def upload_language_video():
             'error': f'업로드 중 오류: {str(e)}'
         }), 500
 
-@app.route('/watch/<video_id>')
-def watch_video(video_id):
-
 # Railway 오류 처리
-    @app.errorhandler(404)
-    def page_not_found(error):
-        """Railway 404 처리"""
+@app.errorhandler(404)
+def page_not_found(error):
+    """Railway 404 처리"""
     if request.path.startswith('/api/'):
         return jsonify({'error': 'API 엔드포인트를 찾을 수 없습니다'}), 404
     
@@ -458,4 +682,7 @@ def favicon():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('DEBUG', 'false').lower() == 'true'
+    
+    logger.info(f"🚀 Railway 서버 시작 - 브런치 도메인: {BRUNCH_DOMAIN} (단일 QR 모드)")
+    
     app.run(host='0.0.0.0', port=port, debug=debug)

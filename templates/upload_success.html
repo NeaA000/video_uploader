@@ -105,6 +105,14 @@
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         }
         
+        .single-qr-notice {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 25px;
+            border-left: 4px solid #2196f3;
+        }
+        
         .language-status {
             background: #d1ecf1;
             border-radius: 15px;
@@ -221,6 +229,14 @@
             background: #218838;
         }
         
+        .feature-highlight {
+            background: linear-gradient(135deg, #fff9c4 0%, #ffe066 100%);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+        }
+        
         @media (max-width: 768px) {
             .container {
                 margin: 10px;
@@ -286,22 +302,41 @@
                 {% endif %}
             </div>
             
+            <!-- 단일 QR 코드 안내 -->
+            <div class="single-qr-notice">
+                <div class="section-title" style="color: #2196f3;">
+                    🎯 스마트 QR 코드 시스템
+                </div>
+                <p style="color: #1976d2; margin-bottom: 10px;">
+                    <strong>하나의 QR 코드로 모든 언어 지원!</strong>
+                </p>
+                <div class="feature-highlight">
+                    <p style="margin: 0; color: #856404;">
+                        💡 <strong>언어별 자동 분기:</strong> 앱에서 사용자가 설정한 언어에 따라 자동으로 해당 언어의 영상이 재생됩니다.
+                        언어별 영상이 없는 경우 한국어 영상이 자동으로 제공됩니다.
+                    </p>
+                </div>
+            </div>
+            
             <!-- 링크 정보 -->
             <div class="info-section">
                 <div class="section-title">
-                    🔗 접근 링크
+                    🔗 단일 접근 링크
                 </div>
                 <div class="copy-section">
-                    <label for="watch-link" style="font-weight: 600; margin-bottom: 8px; display: block;">📱 시청 링크:</label>
+                    <label for="watch-link" style="font-weight: 600; margin-bottom: 8px; display: block;">📱 스마트 시청 링크:</label>
                     <div class="copy-input">
                         <input type="text" id="watch-link" class="copy-text" value="{{ result.qr_link }}" readonly>
                         <button class="copy-btn" onclick="copyToClipboard('watch-link')">복사</button>
                     </div>
+                    <small style="color: #6c757d; margin-top: 5px; display: block;">
+                        ✅ 모든 언어 지원 | 자동 언어 분기 | 한국어 폴백
+                    </small>
                 </div>
                 
                 {% if result.video_url %}
                 <div class="copy-section">
-                    <label for="video-url" style="font-weight: 600; margin-bottom: 8px; display: block;">🎬 동영상 직접 링크:</label>
+                    <label for="video-url" style="font-weight: 600; margin-bottom: 8px; display: block;">🎬 한국어 직접 링크:</label>
                     <div class="copy-input">
                         <input type="text" id="video-url" class="copy-text" value="{{ result.video_url }}" readonly>
                         <button class="copy-btn" onclick="copyToClipboard('video-url')">복사</button>
@@ -320,20 +355,26 @@
                 {% endif %}
             </div>
             
-            <!-- QR 코드 표시 -->
+            <!-- 단일 QR 코드 표시 -->
             {% if result.qr_url %}
             <div class="qr-section">
                 <div class="section-title">
-                    📱 QR 코드
+                    📱 스마트 QR 코드
                 </div>
                 <p style="margin-bottom: 20px; color: #6c757d;">
-                    스마트폰으로 QR 코드를 스캔하여 강의에 바로 접근할 수 있습니다
+                    하나의 QR 코드로 모든 언어를 지원합니다<br>
+                    앱에서 언어 설정에 따라 자동으로 해당 언어 영상이 재생됩니다
                 </p>
-                <img src="{{ result.qr_url }}" alt="QR 코드" class="qr-code">
+                <img src="{{ result.qr_url }}" alt="스마트 QR 코드" class="qr-code">
                 <div style="margin-top: 15px;">
-                    <a href="{{ result.qr_url }}" download="qr_code_{{ result.group_id }}.png" class="btn btn-secondary">
+                    <a href="{{ result.qr_url }}" download="smart_qr_{{ result.group_id }}.png" class="btn btn-secondary">
                         💾 QR 코드 다운로드
                     </a>
+                </div>
+                <div style="margin-top: 10px;">
+                    <small style="color: #666;">
+                        🌍 지원 언어: 한국어, English, 中文, Tiếng Việt, ไทย, 日本語
+                    </small>
                 </div>
             </div>
             {% endif %}
@@ -341,10 +382,10 @@
             <!-- 다국어 번역 상태 -->
             <div class="language-status">
                 <div class="section-title">
-                    🌍 다국어 번역 상태
+                    🌍 다국어 지원 현황
                 </div>
                 <p style="margin-bottom: 15px; color: #0c5460;">
-                    한국어 원본은 즉시 사용 가능하며, 다른 언어들은 백그라운드에서 자동 번역됩니다.
+                    한국어 원본은 즉시 사용 가능하며, 언어별 영상을 추가 업로드할 수 있습니다.
                 </p>
                 
                 <div class="language-badges">
@@ -352,26 +393,26 @@
                         🇰🇷 한국어 ✅ 즉시 사용 가능
                     </span>
                     <span class="language-badge lang-processing">
-                        🇺🇸 English 🔄 자동 번역 중
+                        🇺🇸 English ⏳ 영상 업로드 대기
                     </span>
                     <span class="language-badge lang-processing">
-                        🇨🇳 中文 🔄 자동 번역 중
+                        🇨🇳 中文 ⏳ 영상 업로드 대기
                     </span>
                     <span class="language-badge lang-processing">
-                        🇻🇳 Tiếng Việt 🔄 자동 번역 중
+                        🇻🇳 Tiếng Việt ⏳ 영상 업로드 대기
                     </span>
                     <span class="language-badge lang-processing">
-                        🇹🇭 ไทย 🔄 자동 번역 중
+                        🇹🇭 ไทย ⏳ 영상 업로드 대기
                     </span>
                     <span class="language-badge lang-processing">
-                        🇯🇵 日本語 🔄 자동 번역 중
+                        🇯🇵 日本語 ⏳ 영상 업로드 대기
                     </span>
                 </div>
                 
                 <div style="margin-top: 20px; padding: 15px; background: rgba(255, 255, 255, 0.7); border-radius: 8px;">
                     <p style="font-size: 14px; color: #0c5460; margin: 0;">
-                        💡 <strong>추가 언어 업로드:</strong> '언어별 영상 관리' 메뉴에서 직접 번역된 영상을 업로드할 수 있습니다.
-                        이렇게 하면 더 정확하고 전문적인 다국어 강의를 제공할 수 있습니다.
+                        🎬 <strong>언어별 영상 추가:</strong> '언어별 영상 관리' 메뉴에서 직접 번역된 영상을 업로드하세요.
+                        단일 QR 코드가 자동으로 모든 언어를 지원합니다!
                     </p>
                 </div>
             </div>
@@ -386,12 +427,14 @@
                 </a>
             </div>
             
-            <!-- 공유 안내 -->
+            <!-- 사용 안내 -->
             <div style="background: #e3f2fd; border-radius: 10px; padding: 20px; margin-top: 30px; text-align: center;">
-                <h4 style="color: #1976d2; margin-bottom: 10px;">🌟 강의 공유하기</h4>
+                <h4 style="color: #1976d2; margin-bottom: 10px;">🌟 스마트 QR 시스템 활용법</h4>
                 <p style="color: #424242; margin: 0; line-height: 1.6;">
-                    위의 시청 링크나 QR 코드를 사용하여 학습자들과 강의를 공유하세요.<br>
-                    전 세계 어디서나 모바일, 데스크톱에서 접근 가능합니다!
+                    <strong>1.</strong> QR 코드를 스캔하면 기본 링크로 연결됩니다<br>
+                    <strong>2.</strong> 앱에서 사용자의 언어 설정을 자동 감지합니다<br>
+                    <strong>3.</strong> 해당 언어 영상이 있으면 재생, 없으면 한국어 자동 재생<br>
+                    <strong>4.</strong> 언어별 영상을 추가해도 QR 코드는 그대로 사용 가능!
                 </p>
             </div>
         </div>
@@ -425,7 +468,7 @@
         
         // 페이지 로드 시 애니메이션
         document.addEventListener('DOMContentLoaded', function() {
-            const sections = document.querySelectorAll('.info-section, .qr-section, .language-status');
+            const sections = document.querySelectorAll('.info-section, .qr-section, .language-status, .single-qr-notice');
             sections.forEach((section, index) => {
                 section.style.opacity = '0';
                 section.style.transform = 'translateY(20px)';
@@ -438,9 +481,10 @@
             });
         });
         
-        console.log('🎉 업로드 완료 페이지 로드됨');
+        console.log('🎉 단일 QR 코드 업로드 완료 페이지 로드됨');
         console.log('강의 ID:', '{{ result.group_id }}');
-        console.log('시청 링크:', '{{ result.qr_link }}');
+        console.log('스마트 시청 링크:', '{{ result.qr_link }}');
+        console.log('🌍 단일 QR로 모든 언어 지원 가능');
     </script>
 </body>
 </html>
