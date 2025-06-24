@@ -355,34 +355,5 @@ def favicon():
 
 # Railway 배포용 메인 실행
 if __name__ == '__main__':
-    # Railway 환경 변수
     port = int(os.environ.get('PORT', 8080))
-    debug_mode = os.environ.get('DEBUG', 'false').lower() == 'true'
-    
-    # Railway 환경 감지
-    is_railway = bool(os.environ.get('RAILWAY_ENVIRONMENT') or 
-                     os.environ.get('RAILWAY_PROJECT_ID') or
-                     'railway' in os.environ.get('HOSTNAME', ''))
-    
-    logger.info(f"🚀 Railway Flask 서버 시작")
-    logger.info(f"📍 포트: {port}")
-    logger.info(f"🌍 환경: {'Railway 배포' if is_railway else '로컬 개발'}")
-    logger.info(f"🔧 디버그 모드: {debug_mode}")
-    logger.info(f"📦 서비스 가용성: {SERVICES_AVAILABLE}")
-    
-    try:
-        # Railway에서 서버 시작
-        app.run(
-            host='0.0.0.0',  # Railway 필수
-            port=port,
-            debug=debug_mode,
-            threaded=True,
-            use_reloader=False  # Railway에서 리로더 비활성화
-        )
-    except Exception as e:
-        logger.error(f"❌ Railway 서버 시작 실패: {e}")
-        sys.exit(1)
-else:
-    # Railway gunicorn으로 실행될 때
-    logger.info("🚀 Railway gunicorn으로 Flask 앱 로딩")
-    logger.info(f"📦 서비스 가용성: {SERVICES_AVAILABLE}")
+    app.run(host='0.0.0.0', port=port)
