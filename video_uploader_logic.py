@@ -302,10 +302,28 @@ class VideoUploaderLogic:
                 
                 # Firebase Storage 초기화 (추가됨)
                 try:
-                    self.firebase_bucket = storage.bucket()
-                    logger.info("✅ Firebase Storage 초기화 완료")
+                    storage_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET', f"{os.environ['FIREBASE_PROJECT_ID']}.appspot.com")
+                    self.firebase_bucket = storage.bucket(storage_bucket)
+                    
+                    # 버킷 존재 확인
+                    try:
+                        self.firebase_bucket.get_blob('.test')  # 더미 테스트
+                        logger.info("✅ Firebase Storage 초기화 및 버킷 확인 완료")
+                    except Exception as bucket_error:
+                        if '404' in str(bucket_error) or 'does not exist' in str(bucket_error):
+                            logger.warning(f"⚠️ Firebase Storage 버킷이 존재하지 않음: {storage_bucket}")
+                            logger.info("💡 해결 방법:")
+                            logger.info("   1. Firebase 콘솔 (https://console.firebase.google.com) 접속")
+                            logger.info("   2. 프로젝트 선택 > Storage > 시작하기")
+                            logger.info("   3. 보안 규칙을 '테스트 모드'로 설정")
+                            logger.info(f"   4. 또는 FIREBASE_STORAGE_BUCKET 환경변수를 올바른 버킷명으로 설정")
+                            self.firebase_bucket = None
+                        else:
+                            logger.info("✅ Firebase Storage 초기화 완료 (권한 확인 생략)")
+                        
                 except Exception as e:
                     logger.warning(f"⚠️ Firebase Storage 초기화 실패: {e}")
+                    logger.info("💡 Firebase Storage 없이 Wasabi 단일 저장으로 계속 진행")
                     self.firebase_bucket = None
                 
                 self._service_health['firebase'] = True
@@ -507,7 +525,7 @@ class VideoUploaderLogic:
     
     def create_qr_with_thumbnail(self, video_id: str, title: str = "", thumbnail_path: str = None,
                                 output_path: str = None) -> bool:
-        """QR 코드 + 썸네일 결합 생성 (핵심 기능)"""
+        """QR 코드 + 썸네일 결합 생성 (한글 폰트 지원)"""
         with self._railway_memory_context():
             try:
                 # 단일 QR 링크 생성
@@ -547,6 +565,8 @@ class VideoUploaderLogic:
                             draw.ellipse((0, 0, thumb_size, thumb_size), fill=255)
                             
                             # 썸네일을 원형으로 자르기
+                            if thumbnail.mode != 'RGBA':
+                                thumbnail = thumbnail.convert('RGBA')
                             thumbnail.putalpha(mask)
                             
                             # 흰색 배경의 원형 썸네일 생성 (QR 코드 가독성 향상)
@@ -562,38 +582,78 @@ class VideoUploaderLogic:
                     except Exception as e:
                         logger.warning(f"⚠️ 썸네일 처리 실패, 기본 QR 코드 생성: {e}")
                 
-                # 제목 추가
+                # 제목 추가 (한글 지원 개선)
                 if title:
-                    text_height = 60
-                    margin = 15
-                    total_height = qr_size + text_height + margin
-                    final_img = Image.new('RGB', (qr_size, total_height), 'white')
-                    final_img.paste(qr_img, (0, 0))
-                    
-                    draw = ImageDraw.Draw(final_img)
-                    
                     try:
-                        # 더 큰 폰트 시도
-                        font = ImageFont.load_default()
-                    except:
-                        font = ImageFont.load_default()
-                    
-                    # 제목 텍스트 처리
-                    if len(title.encode('utf-8')) > 60:  # 바이트 길이 기준
-                        title = title[:25] + "..."
-                    
-                    # 텍스트 중앙 정렬
-                    bbox = draw.textbbox((0, 0), title, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    text_x = max(0, (qr_size - text_width) // 2)
-                    text_y = qr_size + margin
-                    
-                    # 텍스트 배경 (가독성 향상)
-                    text_bg_rect = [text_x - 10, text_y - 5, text_x + text_width + 10, text_y + 25]
-                    draw.rectangle(text_bg_rect, fill='lightgray', outline='gray')
-                    
-                    draw.text((text_x, text_y), title, font=font, fill='black')
-                    final_img.save(output_path, quality=90, optimize=True)
+                        # 한글 텍스트 안전 처리
+                        safe_title = title.encode('utf-8', errors='ignore').decode('utf-8')
+                        
+                        text_height = 60
+                        margin = 15
+                        total_height = qr_size + text_height + margin
+                        final_img = Image.new('RGB', (qr_size, total_height), 'white')
+                        final_img.paste(qr_img, (0, 0))
+                        
+                        draw = ImageDraw.Draw(final_img)
+                        
+                        # 한글 지원 폰트 시도
+                        font = None
+                        try:
+                            # 시스템 한글 폰트 시도
+                            font_paths = [
+                                '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',  # Ubuntu
+                                '/usr/share/fonts/TTF/NanumGothic.ttf',  # CentOS
+                                '/System/Library/Fonts/AppleGothic.ttf',  # macOS
+                                'C:/Windows/Fonts/malgun.ttf',  # Windows
+                                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # 대체 폰트
+                            ]
+                            
+                            for font_path in font_paths:
+                                if os.path.exists(font_path):
+                                    font = ImageFont.truetype(font_path, 16)
+                                    break
+                        except Exception as font_error:
+                            logger.debug(f"폰트 로드 실패: {font_error}")
+                        
+                        # 폰트를 찾지 못한 경우 기본 폰트 사용
+                        if font is None:
+                            font = ImageFont.load_default()
+                        
+                        # 제목 텍스트 처리 (길이 제한)
+                        if len(safe_title.encode('utf-8')) > 60:  # 바이트 길이 기준
+                            safe_title = safe_title[:25] + "..."
+                        
+                        # 텍스트 크기 측정 (한글 안전 처리)
+                        try:
+                            bbox = draw.textbbox((0, 0), safe_title, font=font)
+                            text_width = bbox[2] - bbox[0]
+                        except UnicodeEncodeError:
+                            # 폰트가 한글을 지원하지 않는 경우 영어로 대체
+                            safe_title = f"Video_{video_id[:8]}"
+                            bbox = draw.textbbox((0, 0), safe_title, font=font)
+                            text_width = bbox[2] - bbox[0]
+                        
+                        text_x = max(0, (qr_size - text_width) // 2)
+                        text_y = qr_size + margin
+                        
+                        # 텍스트 배경 (가독성 향상)
+                        text_bg_rect = [text_x - 10, text_y - 5, text_x + text_width + 10, text_y + 25]
+                        draw.rectangle(text_bg_rect, fill='lightgray', outline='gray')
+                        
+                        # 텍스트 그리기 (한글 안전 처리)
+                        try:
+                            draw.text((text_x, text_y), safe_title, font=font, fill='black')
+                        except UnicodeEncodeError:
+                            # 한글 그리기 실패 시 영어로 대체
+                            fallback_title = f"Video_{video_id[:8]}"
+                            draw.text((text_x, text_y), fallback_title, font=font, fill='black')
+                            logger.warning("⚠️ 한글 텍스트 렌더링 실패, 영어로 대체")
+                        
+                        final_img.save(output_path, quality=90, optimize=True)
+                        
+                    except Exception as text_error:
+                        logger.warning(f"⚠️ 텍스트 처리 실패, 텍스트 없는 QR 코드 생성: {text_error}")
+                        qr_img.save(output_path, quality=90, optimize=True)
                 else:
                     qr_img.save(output_path, quality=90, optimize=True)
                 
@@ -603,7 +663,19 @@ class VideoUploaderLogic:
             except Exception as e:
                 logger.error(f"❌ QR+썸네일 생성 실패: {e}")
                 logger.error(f"QR+썸네일 생성 실패 상세: {traceback.format_exc()}")
-                return False
+                
+                # 실패 시 기본 QR 코드라도 생성 시도
+                try:
+                    qr = qrcode.QRCode(version=1, box_size=6, border=4)
+                    qr.add_data(f"https://{self.brunch_domain}/watch/{video_id}")
+                    qr.make(fit=True)
+                    qr_img = qr.make_image(fill_color="black", back_color="white")
+                    qr_img.save(output_path or f"qr_{video_id}.png")
+                    logger.info("✅ 기본 QR 코드 생성 완료 (폴백)")
+                    return True
+                except Exception as fallback_error:
+                    logger.error(f"❌ 기본 QR 코드 생성도 실패: {fallback_error}")
+                    return False
     
     def create_single_qr_code(self, video_id: str, title: str = "", output_path: str = None) -> bool:
         """기본 단일 QR 코드 생성 (썸네일 없는 경우)"""
@@ -664,11 +736,23 @@ class VideoUploaderLogic:
     
     def upload_to_firebase_storage(self, local_path: str, firebase_path: str, 
                                  content_type: str = None) -> Optional[str]:
-        """Firebase Storage 업로드 (이중 저장용)"""
+        """Firebase Storage 업로드 (이중 저장용) - 버킷 존재 확인 포함"""
         try:
             if not self.firebase_bucket:
                 logger.warning("⚠️ Firebase Storage가 초기화되지 않음")
                 return None
+            
+            # 버킷 존재 확인
+            try:
+                # 버킷 메타데이터를 가져와서 존재 여부 확인
+                bucket_info = self.firebase_bucket.get_blob('.test')  # 더미 블롭으로 테스트
+            except Exception as bucket_error:
+                if '404' in str(bucket_error) or 'does not exist' in str(bucket_error):
+                    logger.warning(f"⚠️ Firebase Storage 버킷이 존재하지 않음: {self.firebase_bucket.name}")
+                    logger.info("💡 Firebase 콘솔에서 Storage를 활성화하고 버킷을 생성해주세요")
+                    return None
+                # 다른 종류의 에러는 무시 (권한 등)
+                pass
             
             logger.info(f"Firebase Storage 업로드 시작: {firebase_path}")
             
