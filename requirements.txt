@@ -1,16 +1,32 @@
-# requirements.txt - Railway 배포용 라이브러리 목록
+# Railway 최적화된 Flask 다국어 강의 업로드 시스템 v4.0
+# requirements.txt
 
-# 웹 프레임워크
-streamlit==1.28.1
-flask==2.3.3
-werkzeug==2.3.7
+# Flask 및 웹 프레임워크
+Flask==2.3.3
+Werkzeug==2.3.7
+Jinja2==3.1.2
+MarkupSafe==2.1.3
+itsdangerous==2.1.2
+click==8.1.7
 
-# 클라우드 서비스
-boto3==1.28.85
+# Railway 최적화 설정
+gunicorn==21.2.0
+eventlet==0.33.3
+
+# 클라우드 스토리지 (Wasabi S3)
+boto3==1.29.7
+botocore==1.32.7
+
+# Firebase
 firebase-admin==6.2.0
+google-cloud-firestore==2.13.1
+google-cloud-core==2.3.3
+google-auth==2.23.4
 
-# 동영상 처리
+# 비디오 처리 (Railway 최적화)
 moviepy==1.0.3
+imageio==2.31.5
+imageio-ffmpeg==0.4.9
 
 # 이미지 처리
 Pillow==10.0.1
@@ -18,11 +34,4 @@ qrcode[pil]==7.4.2
 
 # HTTP 요청
 requests==2.31.0
-
-# 기타 유틸리티
-python-dotenv==1.0.0
-pathlib2==2.3.7
-
-# Railway 최적화
-gunicorn==21.2.0
-psutil==5.9.6
+urllib
