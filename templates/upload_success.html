@@ -105,6 +105,20 @@
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         }
         
+        .qr-placeholder {
+            width: 250px;
+            height: 250px;
+            background: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+            color: #6c757d;
+        }
+        
         .single-qr-notice {
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border-radius: 15px;
@@ -191,6 +205,16 @@
             transform: translateY(-2px);
         }
         
+        .btn-warning {
+            background: #ffc107;
+            color: #212529;
+        }
+        
+        .btn-warning:hover {
+            background: #e0a800;
+            transform: translateY(-2px);
+        }
+        
         .copy-section {
             background: #f8f9fa;
             border-radius: 10px;
@@ -235,6 +259,15 @@
             padding: 15px;
             margin: 15px 0;
             border-left: 4px solid #ffc107;
+        }
+        
+        .error-notice {
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
         }
         
         @media (max-width: 768px) {
@@ -295,10 +328,12 @@
                     <span class="info-label">파일 크기:</span>
                     <span class="info-value">{{ "{:,}".format(result.metadata.file_size) }} bytes</span>
                 </div>
+                {% if result.metadata.width > 0 %}
                 <div class="info-item">
                     <span class="info-label">해상도:</span>
                     <span class="info-value">{{ result.metadata.width }}x{{ result.metadata.height }}</span>
                 </div>
+                {% endif %}
                 {% endif %}
             </div>
             
@@ -326,7 +361,7 @@
                 <div class="copy-section">
                     <label for="watch-link" style="font-weight: 600; margin-bottom: 8px; display: block;">📱 스마트 시청 링크:</label>
                     <div class="copy-input">
-                        <input type="text" id="watch-link" class="copy-text" value="{{ result.qr_link }}" readonly>
+                        <input type="text" id="watch-link" class="copy-text" value="{{ result.qr_link or 'https://' + result.brunch_domain + '/watch/' + result.group_id }}" readonly>
                         <button class="copy-btn" onclick="copyToClipboard('watch-link')">복사</button>
                     </div>
                     <small style="color: #6c757d; margin-top: 5px; display: block;">
@@ -355,8 +390,7 @@
                 {% endif %}
             </div>
             
-            <!-- 단일 QR 코드 표시 -->
-            {% if result.qr_url %}
+            <!-- QR 코드 표시 (항상 표시, 실패 시 생성 버튼) -->
             <div class="qr-section">
                 <div class="section-title">
                     📱 스마트 QR 코드
@@ -365,19 +399,48 @@
                     하나의 QR 코드로 모든 언어를 지원합니다<br>
                     앱에서 언어 설정에 따라 자동으로 해당 언어 영상이 재생됩니다
                 </p>
-                <img src="{{ result.qr_url }}" alt="스마트 QR 코드" class="qr-code">
-                <div style="margin-top: 15px;">
-                    <a href="{{ result.qr_url }}" download="smart_qr_{{ result.group_id }}.png" class="btn btn-secondary">
-                        💾 QR 코드 다운로드
-                    </a>
-                </div>
+                
+                {% if result.qr_url %}
+                    <!-- QR 코드가 성공적으로 생성된 경우 -->
+                    <img src="{{ result.qr_url }}" alt="스마트 QR 코드" class="qr-code">
+                    <div style="margin-top: 15px;">
+                        <a href="{{ result.qr_url }}" download="smart_qr_{{ result.group_id }}.png" class="btn btn-secondary">
+                            💾 QR 코드 다운로드
+                        </a>
+                    </div>
+                {% else %}
+                    <!-- QR 코드 생성 실패한 경우 -->
+                    <div class="qr-placeholder">
+                        <div style="font-size: 48px; margin-bottom: 10px;">📱</div>
+                        <p style="margin-bottom: 10px;">QR 코드 생성 중...</p>
+                        <small>한글 폰트 문제로 생성이 지연되고 있습니다</small>
+                    </div>
+                    
+                    <div class="error-notice" style="margin-top: 20px;">
+                        <p style="margin-bottom: 10px;"><strong>⚠️ QR 코드 생성 실패</strong></p>
+                        <p style="margin: 0; font-size: 14px;">
+                            한글 폰트 문제로 QR 코드 생성에 실패했습니다. 
+                            시청 링크는 정상적으로 작동하므로 링크를 직접 사용하시거나, 
+                            온라인 QR 생성기를 이용해주세요.
+                        </p>
+                    </div>
+                    
+                    <div style="margin-top: 15px;">
+                        <button class="btn btn-warning" onclick="generateQROnline()">
+                            🔧 온라인 QR 생성기로 이동
+                        </button>
+                        <button class="btn btn-secondary" onclick="retryQRGeneration()">
+                            🔄 QR 생성 재시도
+                        </button>
+                    </div>
+                {% endif %}
+                
                 <div style="margin-top: 10px;">
                     <small style="color: #666;">
                         🌍 지원 언어: 한국어, English, 中文, Tiếng Việt, ไทย, 日本語
                     </small>
                 </div>
             </div>
-            {% endif %}
             
             <!-- 다국어 번역 상태 -->
             <div class="language-status">
@@ -466,6 +529,34 @@
             }
         }
         
+        // 온라인 QR 생성기로 이동
+        function generateQROnline() {
+            const watchLink = document.getElementById('watch-link').value;
+            const qrGeneratorUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(watchLink)}`;
+            window.open(qrGeneratorUrl, '_blank');
+        }
+        
+        // QR 생성 재시도
+        function retryQRGeneration() {
+            const groupId = '{{ result.group_id }}';
+            const retryUrl = `/api/admin/regenerate_qr/${groupId}`;
+            
+            // 재생성 API 호출 (있다면)
+            fetch(retryUrl, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.qr_url) {
+                        location.reload(); // 페이지 새로고침
+                    } else {
+                        alert('QR 코드 재생성에 실패했습니다. 온라인 생성기를 이용해주세요.');
+                    }
+                })
+                .catch(err => {
+                    console.error('QR 재생성 오류:', err);
+                    alert('QR 코드 재생성에 실패했습니다.');
+                });
+        }
+        
         // 페이지 로드 시 애니메이션
         document.addEventListener('DOMContentLoaded', function() {
             const sections = document.querySelectorAll('.info-section, .qr-section, .language-status, .single-qr-notice');
@@ -483,7 +574,8 @@
         
         console.log('🎉 단일 QR 코드 업로드 완료 페이지 로드됨');
         console.log('강의 ID:', '{{ result.group_id }}');
-        console.log('스마트 시청 링크:', '{{ result.qr_link }}');
+        console.log('스마트 시청 링크:', '{{ result.qr_link or "https://" + result.brunch_domain + "/watch/" + result.group_id }}');
+        console.log('QR 코드 상태:', '{{ "생성됨" if result.qr_url else "생성 실패" }}');
         console.log('🌍 단일 QR로 모든 언어 지원 가능');
     </script>
 </body>
