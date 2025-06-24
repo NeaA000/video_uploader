@@ -1,4 +1,4 @@
-# video_uploader_logic.py - 완전한 비디오 업로더 (실제 동작 버전)
+# video_uploader_logic.py - 수정된 완전한 비디오 업로더 (개선된 검증 포함)
 import os
 import sys
 import uuid
@@ -10,6 +10,7 @@ import time
 import requests
 import urllib.parse
 import threading
+import traceback
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple, List, Callable
@@ -38,9 +39,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 상수 정의 (Railway 최적화)
-SUPPORTED_VIDEO_FORMATS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv'}
-SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+# 상수 정의 (확장된 지원 형식)
+SUPPORTED_VIDEO_FORMATS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv', '.3gp', '.m4v', '.f4v', '.m2v'}
+SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.svg', '.ico', '.heic', '.heif'}
 MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GB
 RAILWAY_MEMORY_LIMIT = 8 * 1024 * 1024 * 1024  # 8GB Railway 메모리 제한
 
@@ -70,16 +71,16 @@ CATEGORY_STRUCTURE = {
 }
 
 class GoogleTranslator:
-    """googletrans 라이브러리를 사용한 번역 시스템"""
+    """수정된 googletrans 라이브러리를 사용한 번역 시스템"""
     
     def __init__(self):
         self.translator = Translator()
         
         # Railway 최적화 설정
-        self.timeout = 10
-        self.max_retries = 2
+        self.timeout = 15
+        self.max_retries = 3
         
-        # 지원 언어 코드
+        # 올바른 언어 코드 매핑
         self.language_codes = {
             'en': 'English',
             'zh': '中文',
@@ -88,15 +89,24 @@ class GoogleTranslator:
             'ja': '日本語'
         }
         
+        # googletrans 호환 언어 코드
+        self.googletrans_codes = {
+            'en': 'en',
+            'zh': 'zh-cn',  # 중국어 간체
+            'vi': 'vi',
+            'th': 'th', 
+            'ja': 'ja'
+        }
+        
         # 캐시 시스템 (Railway 메모리 절약)
         self._translation_cache = {}
         self._cache_lock = threading.Lock()
-        self._cache_max_size = 50  # Railway 메모리 제한
+        self._cache_max_size = 50
         
-        logger.info("🌍 googletrans 번역 서비스 초기화 완료")
+        logger.info("🌍 수정된 googletrans 번역 서비스 초기화 완료")
     
     def translate_title(self, korean_title: str) -> Dict[str, str]:
-        """강의명 번역 (googletrans 사용)"""
+        """수정된 강의명 번역 (개선된 오류 처리)"""
         # 캐시 확인
         cache_key = f"title_{hash(korean_title)}"
         with self._cache_lock:
@@ -106,45 +116,76 @@ class GoogleTranslator:
         
         translations = {'ko': self._make_filename_safe(korean_title)}
         
-        # googletrans로 번역 시도
-        for lang_code in self.language_codes.keys():
+        # 번역 대상 언어
+        target_languages = ['en', 'zh', 'vi', 'th', 'ja']
+        
+        for lang_code in target_languages:
             try:
-                translated = self._translate_with_googletrans(korean_title, lang_code)
-                if translated:
+                # 올바른 googletrans 언어 코드 사용
+                googletrans_code = self.googletrans_codes.get(lang_code, lang_code)
+                logger.debug(f"번역 시도: {korean_title} -> {lang_code} ({googletrans_code})")
+                
+                translated = self._translate_with_googletrans(korean_title, googletrans_code)
+                
+                if translated and translated != korean_title:
                     translations[lang_code] = self._make_filename_safe(translated)
+                    logger.debug(f"번역 성공: {lang_code} -> {translated}")
                 else:
+                    logger.warning(f"{lang_code} 번역 실패 또는 결과 없음, 대체 번역 사용")
                     translations[lang_code] = self._fallback_single_translation(korean_title, lang_code)
                 
                 # Railway API 제한 대응
-                time.sleep(0.2)
+                time.sleep(0.5)
                 
             except Exception as e:
                 logger.warning(f"{lang_code} 번역 실패, 대체 번역 사용: {e}")
                 translations[lang_code] = self._fallback_single_translation(korean_title, lang_code)
         
-        # 캐시에 저장 (Railway 메모리 관리)
+        # 캐시에 저장
         with self._cache_lock:
             if len(self._translation_cache) >= self._cache_max_size:
-                # 가장 오래된 항목 제거
                 oldest_key = next(iter(self._translation_cache))
                 del self._translation_cache[oldest_key]
             
             self._translation_cache[cache_key] = translations.copy()
         
+        logger.info(f"번역 완료: {korean_title} -> {len(translations)}개 언어")
         return translations
     
     def _translate_with_googletrans(self, text: str, target_lang: str) -> Optional[str]:
-        """googletrans를 사용한 번역"""
+        """수정된 googletrans 번역 (강화된 오류 처리)"""
         for attempt in range(self.max_retries):
             try:
-                result = self.translator.translate(text, src='ko', dest=target_lang)
-                if result and result.text:
-                    return result.text
+                logger.debug(f"googletrans 번역 시도 {attempt + 1}: '{text}' -> {target_lang}")
+                
+                # 텍스트 전처리
+                clean_text = text.strip()
+                if not clean_text:
+                    return None
+                
+                result = self.translator.translate(clean_text, src='ko', dest=target_lang)
+                
+                if result and result.text and result.text.strip():
+                    translated_text = result.text.strip()
+                    
+                    # 번역 결과 검증
+                    if translated_text != clean_text and len(translated_text) > 0:
+                        logger.debug(f"googletrans 번역 성공: '{clean_text}' -> '{translated_text}' ({target_lang})")
+                        return translated_text
+                    else:
+                        logger.warning(f"googletrans 번역 결과가 원본과 동일하거나 비어있음: {target_lang}")
+                        
+                else:
+                    logger.warning(f"googletrans 번역 결과가 비어있음: {target_lang}")
+                    
             except Exception as e:
-                logger.warning(f"googletrans 번역 시도 {attempt + 1} 실패: {e}")
+                logger.warning(f"googletrans 번역 시도 {attempt + 1} 실패 ({target_lang}): {e}")
                 if attempt < self.max_retries - 1:
-                    time.sleep(1)
+                    wait_time = (attempt + 1) * 2  # 점진적 대기
+                    logger.debug(f"{wait_time}초 대기 후 재시도")
+                    time.sleep(wait_time)
         
+        logger.error(f"googletrans 번역 최종 실패: {target_lang}")
         return None
     
     def _make_filename_safe(self, text: str) -> str:
@@ -165,29 +206,35 @@ class GoogleTranslator:
         return safe_text or 'Unknown_Title'
     
     def _fallback_single_translation(self, korean_title: str, lang_code: str) -> str:
-        """Railway 최적화된 키워드 기반 번역"""
+        """Railway 최적화된 키워드 기반 대체 번역"""
         # Railway 메모리 최적화된 키워드 맵
         keyword_maps = {
             'en': {
                 '안전': 'Safety', '교육': 'Training', '기초': 'Basic', '용접': 'Welding',
                 '크레인': 'Crane', '조작': 'Operation', '장비': 'Equipment', '사용법': 'Usage',
                 '점검': 'Inspection', '유지보수': 'Maintenance', '응급처치': 'First_Aid',
-                '산업': 'Industrial', '건설': 'Construction', '기계': 'Machine', '공구': 'Tool'
+                '산업': 'Industrial', '건설': 'Construction', '기계': 'Machine', '공구': 'Tool',
+                '화학': 'Chemical', '물질': 'Material', '처리': 'Processing', '관리': 'Management'
             },
             'zh': {
                 '안전': '安全', '교육': '培训', '기초': '基础', '용접': '焊接',
-                '크레인': '起重机', '조작': '操作', '장비': '设备', '사용법': '使用方法'
+                '크레인': '起重机', '조작': '操作', '장비': '设备', '사용법': '使用方法',
+                '점검': '检查', '유지보수': '维护', '응급처치': '急救',
+                '산업': '工业', '건설': '建设', '기계': '机械', '공구': '工具'
             },
             'vi': {
                 '안전': 'An_Toan', '교육': 'Dao_Tao', '기초': 'Co_Ban', '용접': 'Han',
-                '크레인': 'Cau_Truc', '조작': 'Van_Hanh', '장비': 'Thiet_Bi'
+                '크레인': 'Cau_Truc', '조작': 'Van_Hanh', '장비': 'Thiet_Bi',
+                '점검': 'Kiem_Tra', '유지보수': 'Bao_Duong', '산업': 'Cong_Nghiep'
             },
             'th': {
-                '안전': 'ปลอดภัย', '교육': 'การศึกษา', '기초': 'พื้นฐาน', '용접': 'เชื่อม'
+                '안전': 'ความปลอดภัย', '교육': 'การศึกษา', '기초': 'พื้นฐาน', '용접': 'การเชื่อม',
+                '크레인': 'เครน', '조작': 'การใช้งาน', '장비': 'อุปกรณ์'
             },
             'ja': {
                 '안전': '安全', '교육': '教育', '기초': '基礎', '용접': '溶接',
-                '크레인': 'クレーン', '조작': '操作', '장비': '設備'
+                '크레인': 'クレーン', '조작': '操作', '장비': '設備',
+                '점검': '点検', '유지보수': 'メンテナンス', '산업': '産業'
             }
         }
         
@@ -198,11 +245,23 @@ class GoogleTranslator:
         for korean, translated in keyword_map.items():
             result = result.replace(korean, translated)
         
+        # 언어별 접미사 추가 (구분용)
+        lang_suffix = {
+            'en': '_EN',
+            'zh': '_CN', 
+            'vi': '_VI',
+            'th': '_TH',
+            'ja': '_JP'
+        }
+        
+        if result == korean_title:  # 번역이 적용되지 않은 경우
+            result = f"{korean_title}_{lang_suffix.get(lang_code, lang_code.upper())}"
+        
         # 파일명 안전화
         return self._make_filename_safe(result)
 
 class VideoUploaderLogic:
-    """완전한 비디오 업로더 메인 클래스"""
+    """수정된 완전한 비디오 업로더 메인 클래스"""
     
     def __init__(self):
         self._initialization_lock = threading.Lock()
@@ -219,6 +278,7 @@ class VideoUploaderLogic:
             logger.info("✅ Railway 비디오 업로더 초기화 완료")
         except Exception as e:
             logger.error(f"❌ 비디오 업로더 초기화 실패: {e}")
+            logger.error(f"초기화 실패 상세: {traceback.format_exc()}")
             raise
     
     def _initialize_services(self):
@@ -251,6 +311,7 @@ class VideoUploaderLogic:
                 
             except Exception as e:
                 logger.error(f"❌ 서비스 초기화 실패: {e}")
+                logger.error(f"서비스 초기화 실패 상세: {traceback.format_exc()}")
                 raise
     
     def _initialize_firebase(self):
@@ -280,6 +341,7 @@ class VideoUploaderLogic:
             
         except Exception as e:
             logger.error(f"❌ Firebase 초기화 실패: {e}")
+            logger.error(f"Firebase 초기화 실패 상세: {traceback.format_exc()}")
             raise
     
     def _get_wasabi_client(self):
@@ -292,13 +354,14 @@ class VideoUploaderLogic:
                 region_name=os.environ.get('WASABI_REGION', 'us-east-1'),
                 endpoint_url=f"https://s3.{os.environ.get('WASABI_REGION', 'us-east-1')}.wasabisys.com",
                 config=boto3.session.Config(
-                    retries={'max_attempts': 2, 'mode': 'adaptive'},
+                    retries={'max_attempts': 3, 'mode': 'adaptive'},
                     max_pool_connections=3,  # Railway 최적화
                     region_name=os.environ.get('WASABI_REGION', 'us-east-1')
                 )
             )
         except Exception as e:
             logger.error(f"❌ Wasabi 클라이언트 생성 실패: {e}")
+            logger.error(f"Wasabi 클라이언트 생성 실패 상세: {traceback.format_exc()}")
             raise
     
     @contextmanager
@@ -325,7 +388,7 @@ class VideoUploaderLogic:
             return 0.0
     
     def validate_file(self, file_path: str, file_type: str = 'video') -> bool:
-        """Railway 최적화된 파일 검증"""
+        """개선된 파일 검증 - 더 유연한 형식 지원"""
         try:
             path = Path(file_path)
             
@@ -334,14 +397,28 @@ class VideoUploaderLogic:
                 return False
             
             ext = path.suffix.lower()
+            logger.debug(f"파일 검증 시작: {file_path} (확장자: '{ext}', 타입: {file_type})")
             
-            if file_type == 'video' and ext not in SUPPORTED_VIDEO_FORMATS:
-                logger.warning(f"지원하지 않는 비디오 형식: {ext}")
-                return False
-            
-            if file_type == 'image' and ext not in SUPPORTED_IMAGE_FORMATS:
-                logger.warning(f"지원하지 않는 이미지 형식: {ext}")
-                return False
+            # 확장자가 없는 경우 파일 내용으로 판단
+            if not ext:
+                logger.warning(f"확장자가 없는 파일: {file_path}")
+                if file_type == 'image':
+                    # 이미지는 PIL로 검증
+                    return self._validate_image_with_pil(file_path)
+                else:
+                    # 비디오는 파일 시그니처로 검증
+                    return self._validate_file_by_content(file_path, file_type)
+            else:
+                # 확장자 기반 검증
+                if file_type == 'video' and ext not in SUPPORTED_VIDEO_FORMATS:
+                    logger.warning(f"지원하지 않는 비디오 형식: {ext}")
+                    # 파일 내용으로 한 번 더 검증
+                    return self._validate_file_by_content(file_path, file_type)
+                
+                if file_type == 'image' and ext not in SUPPORTED_IMAGE_FORMATS:
+                    logger.warning(f"지원하지 않는 이미지 형식: {ext}")
+                    # 이미지는 PIL로 검증 (더 관대하게)
+                    return self._validate_image_with_pil(file_path)
             
             # Railway 파일 크기 검증
             file_size = os.path.getsize(file_path)
@@ -354,20 +431,84 @@ class VideoUploaderLogic:
                 return False
             
             # Railway 메모리 제한 확인
-            if file_size > RAILWAY_MEMORY_LIMIT // 2:  # 메모리의 절반 이상은 업로드 불가
+            if file_size > RAILWAY_MEMORY_LIMIT // 2:
                 logger.warning(f"Railway 메모리 제한으로 인한 파일 크기 초과: {file_size}")
                 return False
             
+            logger.info(f"파일 검증 성공: {file_path} ({file_size / 1024 / 1024:.2f}MB)")
             return True
             
         except Exception as e:
             logger.error(f"파일 검증 오류: {e}")
+            logger.error(f"파일 검증 오류 상세: {traceback.format_exc()}")
+            return False
+    
+    def _validate_image_with_pil(self, file_path: str) -> bool:
+        """PIL을 사용한 이미지 파일 검증"""
+        try:
+            with Image.open(file_path) as img:
+                # 이미지가 정상적으로 열리면 유효한 이미지
+                img.verify()  # 이미지 무결성 검증
+                logger.info(f"PIL로 검증된 이미지: {file_path} (형식: {img.format})")
+                return True
+        except Exception as e:
+            logger.warning(f"PIL 이미지 검증 실패: {file_path} - {e}")
+            return False
+    
+    def _validate_file_by_content(self, file_path: str, file_type: str) -> bool:
+        """파일 내용 기반 검증 (확장자가 없는 경우)"""
+        try:
+            # 파일 시그니처 (매직 넘버) 확인
+            with open(file_path, 'rb') as f:
+                header = f.read(16)  # 16바이트 읽기
+            
+            if file_type == 'video':
+                video_signatures = [
+                    b'\x00\x00\x00\x18ftypmp4',  # MP4
+                    b'\x00\x00\x00\x1cftypisom',  # MP4 ISO
+                    b'\x00\x00\x00\x20ftypmp41',  # MP4
+                    b'RIFF',  # AVI/WebM
+                    b'\x1a\x45\xdf\xa3',  # WebM/MKV
+                    b'\x00\x00\x01\xba',  # MPEG
+                    b'\x00\x00\x01\xb3',  # MPEG
+                    b'FLV\x01',  # FLV
+                ]
+                
+                for sig in video_signatures:
+                    if header.startswith(sig) or sig in header:
+                        logger.info(f"파일 시그니처로 동영상 확인: {file_path}")
+                        return True
+                        
+            elif file_type == 'image':
+                image_signatures = [
+                    b'\xff\xd8\xff',  # JPEG
+                    b'\x89PNG\r\n\x1a\n',  # PNG
+                    b'GIF87a',  # GIF87a
+                    b'GIF89a',  # GIF89a
+                    b'BM',  # BMP
+                    b'RIFF',  # WebP (RIFF 포함)
+                    b'\x00\x00\x01\x00',  # ICO
+                    b'\x00\x00\x02\x00',  # CUR
+                ]
+                
+                for sig in image_signatures:
+                    if header.startswith(sig):
+                        logger.info(f"파일 시그니처로 이미지 확인: {file_path}")
+                        return True
+            
+            logger.warning(f"파일 시그니처 검증 실패: {file_path} (헤더: {header[:8].hex()})")
+            return False
+            
+        except Exception as e:
+            logger.warning(f"파일 내용 검증 실패: {e}")
             return False
     
     def extract_video_metadata(self, video_path: str) -> Dict[str, Any]:
         """Railway 메모리 최적화된 비디오 메타데이터 추출"""
         with self._railway_memory_context():
             try:
+                logger.debug(f"비디오 메타데이터 추출 시작: {video_path}")
+                
                 # Railway 안전 모드로 메타데이터 추출
                 with VideoFileClip(video_path) as clip:
                     duration_sec = int(clip.duration) if clip.duration else 0
@@ -391,11 +532,13 @@ class VideoUploaderLogic:
                     'file_size_mb': round(file_size / 1024 / 1024, 2)
                 }
                 
-                logger.debug(f"비디오 메타데이터: {duration_str}, {width}x{height}, {file_size//1024//1024}MB")
+                logger.info(f"비디오 메타데이터 추출 완료: {duration_str}, {width}x{height}, {file_size//1024//1024}MB")
                 return metadata
                 
             except Exception as e:
                 logger.warning(f"비디오 메타데이터 추출 실패, 기본값 사용: {e}")
+                logger.warning(f"메타데이터 추출 실패 상세: {traceback.format_exc()}")
+                
                 file_size = os.path.getsize(video_path) if os.path.exists(video_path) else 0
                 return {
                     'duration_seconds': 0,
@@ -411,6 +554,8 @@ class VideoUploaderLogic:
         """Railway 최적화된 QR 코드 생성"""
         with self._railway_memory_context():
             try:
+                logger.debug(f"QR 코드 생성 시작: {data[:50]}...")
+                
                 # Railway 메모리 절약 설정
                 qr = qrcode.QRCode(
                     version=1,
@@ -455,50 +600,45 @@ class VideoUploaderLogic:
                 else:
                     qr_img.save(output_path, quality=85, optimize=True)
                 
-                logger.debug(f"QR 코드 생성 완료: {output_path}")
+                logger.info(f"QR 코드 생성 완료: {output_path}")
                 return True
                 
             except Exception as e:
                 logger.error(f"QR 코드 생성 실패: {e}")
+                logger.error(f"QR 코드 생성 실패 상세: {traceback.format_exc()}")
                 return False
     
     def upload_to_wasabi(self, local_path: str, s3_key: str, content_type: str = None,
                         progress_callback: Callable = None) -> Optional[str]:
         """완전한 Wasabi 업로드 구현"""
         try:
+            logger.info(f"Wasabi 업로드 시작: {s3_key}")
+            
             extra_args = {'ACL': 'public-read'}
             if content_type:
                 extra_args['ContentType'] = content_type
             
             # Railway 최적화된 진행률 콜백
-            def railway_progress_callback(bytes_transferred):
-                if progress_callback and hasattr(railway_progress_callback, 'file_size'):
-                    if railway_progress_callback.file_size > 0:
-                        percentage = min((bytes_transferred / railway_progress_callback.file_size) * 100, 100)
-                        progress_callback(int(percentage), f"업로드 진행 중... {percentage:.1f}%")
+            uploaded_bytes = 0
+            total_bytes = os.path.getsize(local_path)
             
-            # 파일 크기 설정
-            if progress_callback:
-                railway_progress_callback.file_size = os.path.getsize(local_path)
+            def railway_progress_callback(bytes_transferred):
+                nonlocal uploaded_bytes
+                uploaded_bytes = bytes_transferred
+                
+                if progress_callback and total_bytes > 0:
+                    percentage = min((uploaded_bytes / total_bytes) * 100, 100)
+                    progress_callback(int(percentage), f"업로드 진행 중... {percentage:.1f}% ({uploaded_bytes / 1024 / 1024:.1f}MB / {total_bytes / 1024 / 1024:.1f}MB)")
             
             # Railway 최적화된 업로드 실행
-            if progress_callback:
-                self.s3_client.upload_file(
-                    local_path,
-                    self.bucket_name,
-                    s3_key,
-                    Config=self.transfer_config,
-                    ExtraArgs=extra_args,
-                    Callback=railway_progress_callback
-                )
-            else:
-                self.s3_client.upload_file(
-                    local_path,
-                    self.bucket_name,
-                    s3_key,
-                    Config=self.transfer_config,
-                    ExtraArgs=extra_args
-                )
+            self.s3_client.upload_file(
+                local_path,
+                self.bucket_name,
+                s3_key,
+                Config=self.transfer_config,
+                ExtraArgs=extra_args,
+                Callback=railway_progress_callback if progress_callback else None
+            )
             
             # Railway CDN URL 생성
             if self.wasabi_cdn_url:
@@ -507,11 +647,12 @@ class VideoUploaderLogic:
                 region = os.environ.get('WASABI_REGION', 'us-east-1')
                 public_url = f"https://s3.{region}.wasabisys.com/{self.bucket_name}/{s3_key}"
             
-            logger.info(f"✅ Wasabi 업로드 완료: {s3_key}")
+            logger.info(f"✅ Wasabi 업로드 완료: {s3_key} -> {public_url}")
             return public_url
             
         except Exception as e:
-            logger.error(f"❌ Wasabi 업로드 실패: {e}")
+            logger.error(f"❌ Wasabi 업로드 실패: {s3_key} - {e}")
+            logger.error(f"Wasabi 업로드 실패 상세: {traceback.format_exc()}")
             return None
     
     def upload_video(self, video_path: str, thumbnail_path: Optional[str], group_name: str,
@@ -525,9 +666,9 @@ class VideoUploaderLogic:
                 def update_progress(value: int, message: str):
                     if progress_callback:
                         progress_callback(value, message)
-                    logger.info(f"진행률 {value}%: {message}")
+                    logger.info(f"업로드 진행률 {value}%: {message}")
                 
-                update_progress(5, "🔍 파일 검증 중...")
+                update_progress(5, "🔍 파일 검증 및 메타데이터 추출 중...")
                 
                 # Railway 메모리 최적화된 메타데이터 추출
                 video_metadata = self.extract_video_metadata(video_path)
@@ -554,14 +695,15 @@ class VideoUploaderLogic:
                 # Railway 최적화된 콘텐츠 타입
                 content_type_map = {
                     '.mp4': 'video/mp4', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
-                    '.wmv': 'video/x-ms-wmv', '.webm': 'video/webm', '.mkv': 'video/x-matroska'
+                    '.wmv': 'video/x-ms-wmv', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+                    '.flv': 'video/x-flv', '.3gp': 'video/3gpp', '.m4v': 'video/x-m4v'
                 }
                 video_content_type = content_type_map.get(video_ext, 'video/mp4')
                 
                 # Railway 업로드 진행률 조정
                 def video_progress(percentage, msg):
                     adjusted_percentage = 25 + (percentage * 0.4)  # 25-65%
-                    update_progress(int(adjusted_percentage), f"🎬 {msg}")
+                    update_progress(int(adjusted_percentage), f"🎬 동영상: {msg}")
                 
                 video_url = self.upload_to_wasabi(
                     video_path,
@@ -584,7 +726,8 @@ class VideoUploaderLogic:
                     
                     thumb_content_type_map = {
                         '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-                        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp'
+                        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+                        '.tiff': 'image/tiff', '.svg': 'image/svg+xml'
                     }
                     thumb_content_type = thumb_content_type_map.get(thumb_ext, 'image/jpeg')
                     
@@ -628,7 +771,7 @@ class VideoUploaderLogic:
                     'upload_date': date_str,
                     'created_at': firestore.SERVER_TIMESTAMP,
                     'updated_at': firestore.SERVER_TIMESTAMP,
-                    'translation_status': 'pending',
+                    'translation_status': 'completed',
                     'supported_languages_count': 1,
                     'total_file_size': video_metadata['file_size'],
                     'supported_video_languages': ['ko'],
@@ -704,7 +847,7 @@ class VideoUploaderLogic:
                 update_progress(100, "✅ 업로드 완료!")
                 
                 # Railway 성공 응답
-                return {
+                result = {
                     'success': True,
                     'group_id': group_id,
                     'video_url': video_url,
@@ -715,8 +858,12 @@ class VideoUploaderLogic:
                     'railway_optimized': True
                 }
                 
+                logger.info(f"✅ 비디오 업로드 성공: {group_name} (ID: {group_id})")
+                return result
+                
             except Exception as e:
                 logger.error(f"❌ 비디오 업로드 실패: {e}")
+                logger.error(f"비디오 업로드 실패 상세: {traceback.format_exc()}")
                 return {
                     'success': False,
                     'error': str(e),
@@ -773,7 +920,8 @@ class VideoUploaderLogic:
                 
                 content_type_map = {
                     '.mp4': 'video/mp4', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
-                    '.wmv': 'video/x-ms-wmv', '.webm': 'video/webm', '.mkv': 'video/x-matroska'
+                    '.wmv': 'video/x-ms-wmv', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+                    '.flv': 'video/x-flv', '.3gp': 'video/3gpp', '.m4v': 'video/x-m4v'
                 }
                 video_content_type = content_type_map.get(video_ext, 'video/mp4')
                 
@@ -782,7 +930,7 @@ class VideoUploaderLogic:
                 # Railway 진행률 조정
                 def lang_progress(percentage, msg):
                     adjusted_percentage = 40 + (percentage * 0.4)  # 40-80%
-                    update_progress(int(adjusted_percentage), f"🌐 {msg}")
+                    update_progress(int(adjusted_percentage), f"🌐 {language_code}: {msg}")
                 
                 video_url = self.upload_to_wasabi(
                     video_path,
@@ -838,7 +986,7 @@ class VideoUploaderLogic:
                 
                 update_progress(100, "✅ 언어별 영상 업로드 완료!")
                 
-                return {
+                result = {
                     'success': True,
                     'video_url': video_url,
                     'language_code': language_code,
@@ -847,8 +995,12 @@ class VideoUploaderLogic:
                     'railway_optimized': True
                 }
                 
+                logger.info(f"✅ 언어별 영상 업로드 성공: {video_id} ({language_code})")
+                return result
+                
             except Exception as e:
                 logger.error(f"❌ 언어별 영상 업로드 실패: {e}")
+                logger.error(f"언어별 영상 업로드 실패 상세: {traceback.format_exc()}")
                 return {
                     'success': False,
                     'error': str(e),
@@ -858,6 +1010,8 @@ class VideoUploaderLogic:
     def get_existing_videos(self) -> List[Dict[str, Any]]:
         """완전한 기존 영상 목록 조회 구현"""
         try:
+            logger.info("기존 영상 목록 조회 시작")
+            
             # Railway 메모리 제한으로 50개만 조회
             docs = self.db.collection('uploads').order_by(
                 'created_at', direction=firestore.Query.DESCENDING
@@ -917,6 +1071,7 @@ class VideoUploaderLogic:
             
         except Exception as e:
             logger.error(f"❌ 영상 목록 로드 실패: {e}")
+            logger.error(f"영상 목록 로드 실패 상세: {traceback.format_exc()}")
             return []
     
     def get_upload_status(self, group_id: str) -> Dict[str, Any]:
@@ -957,6 +1112,7 @@ class VideoUploaderLogic:
             
         except Exception as e:
             logger.error(f"업로드 상태 확인 실패: {e}")
+            logger.error(f"업로드 상태 확인 실패 상세: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     def _extract_tags_from_content(self, content: str) -> List[str]:
@@ -1013,7 +1169,8 @@ class VideoUploaderLogic:
             'wasabi': self._service_health['wasabi'],
             'translator': self._service_health['translator'],
             'memory_usage': self._get_memory_usage(),
-            'railway_optimized': True
+            'railway_optimized': True,
+            'timestamp': datetime.now().isoformat()
         }
     
     def cleanup_temp_files(self, file_paths: List[str]):
