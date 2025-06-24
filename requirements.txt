@@ -1,0 +1,28 @@
+# requirements.txt - Railway 배포용 라이브러리 목록
+
+# 웹 프레임워크
+streamlit==1.28.1
+flask==2.3.3
+werkzeug==2.3.7
+
+# 클라우드 서비스
+boto3==1.28.85
+firebase-admin==6.2.0
+
+# 동영상 처리
+moviepy==1.0.3
+
+# 이미지 처리
+Pillow==10.0.1
+qrcode[pil]==7.4.2
+
+# HTTP 요청
+requests==2.31.0
+
+# 기타 유틸리티
+python-dotenv==1.0.0
+pathlib2==2.3.7
+
+# Railway 최적화
+gunicorn==21.2.0
+psutil==5.9.6

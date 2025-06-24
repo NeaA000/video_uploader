@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>업로드 완료 - 다국어 강의 시스템</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Malgun Gothic', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .success-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            animation: bounce 2s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-10px); }
+            60% { transform: translateY(-5px); }
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .info-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
+            border-left: 4px solid #28a745;
+        }
+        
+        .section-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #28a745;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .info-item {
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            min-width: 100px;
+            color: #495057;
+        }
+        
+        .info-value {
+            color: #6c757d;
+            word-break: break-all;
+        }
+        
+        .qr-section {
+            text-align: center;
+            background: #e8f5e8;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
+        }
+        
+        .qr-code {
+            max-width: 250px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .language-status {
+            background: #d1ecf1;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
+            border-left: 4px solid #17a2b8;
+        }
+        
+        .language-badges {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 15px;
+        }
+        
+        .language-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .lang-ready {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .lang-processing {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+        
+        .copy-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            border: 1px solid #dee2e6;
+        }
+        
+        .copy-input {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .copy-text {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 14px;
+            background: white;
+        }
+        
+        .copy-btn {
+            padding: 8px 16px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .copy-btn:hover {
+            background: #218838;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+            }
+            
+            .header, .content {
+                padding: 25px 20px;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .copy-input {
+                flex-direction: column;
+            }
+            
+            .copy-text {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="success-icon">🎉</div>
+            <h1>업로드 완료!</h1>
+            <p>다국어 강의가 성공적으로 업로드되었습니다</p>
+        </div>
+        
+        <div class="content">
+            <!-- 기본 정보 -->
+            <div class="info-section">
+                <div class="section-title">
+                    📊 업로드 정보
+                </div>
+                <div class="info-item">
+                    <span class="info-label">강의명:</span>
+                    <span class="info-value">{{ group_name }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">카테고리:</span>
+                    <span class="info-value">{{ category_path }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">그룹 ID:</span>
+                    <span class="info-value">{{ result.group_id }}</span>
+                </div>
+                {% if result.metadata %}
+                <div class="info-item">
+                    <span class="info-label">동영상 길이:</span>
+                    <span class="info-value">{{ result.metadata.duration_string }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">파일 크기:</span>
+                    <span class="info-value">{{ "{:,}".format(result.metadata.file_size) }} bytes</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">해상도:</span>
+                    <span class="info-value">{{ result.metadata.width }}x{{ result.metadata.height }}</span>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- 링크 정보 -->
+            <div class="info-section">
+                <div class="section-title">
+                    🔗 접근 링크
+                </div>
+                <div class="copy-section">
+                    <label for="watch-link" style="font-weight: 600; margin-bottom: 8px; display: block;">📱 시청 링크:</label>
+                    <div class="copy-input">
+                        <input type="text" id="watch-link" class="copy-text" value="{{ result.qr_link }}" readonly>
+                        <button class="copy-btn" onclick="copyToClipboard('watch-link')">복사</button>
+                    </div>
+                </div>
+                
+                {% if result.video_url %}
+                <div class="copy-section">
+                    <label for="video-url" style="font-weight: 600; margin-bottom: 8px; display: block;">🎬 동영상 직접 링크:</label>
+                    <div class="copy-input">
+                        <input type="text" id="video-url" class="copy-text" value="{{ result.video_url }}" readonly>
+                        <button class="copy-btn" onclick="copyToClipboard('video-url')">복사</button>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if result.qr_url %}
+                <div class="copy-section">
+                    <label for="qr-url" style="font-weight: 600; margin-bottom: 8px; display: block;">📱 QR 코드 이미지:</label>
+                    <div class="copy-input">
+                        <input type="text" id="qr-url" class="copy-text" value="{{ result.qr_url }}" readonly>
+                        <button class="copy-btn" onclick="copyToClipboard('qr-url')">복사</button>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- QR 코드 표시 -->
+            {% if result.qr_url %}
+            <div class="qr-section">
+                <div class="section-title">
+                    📱 QR 코드
+                </div>
+                <p style="margin-bottom: 20px; color: #6c757d;">
+                    스마트폰으로 QR 코드를 스캔하여 강의에 바로 접근할 수 있습니다
+                </p>
+                <img src="{{ result.qr_url }}" alt="QR 코드" class="qr-code">
+                <div style="margin-top: 15px;">
+                    <a href="{{ result.qr_url }}" download="qr_code_{{ result.group_id }}.png" class="btn btn-secondary">
+                        💾 QR 코드 다운로드
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- 다국어 번역 상태 -->
+            <div class="language-status">
+                <div class="section-title">
+                    🌍 다국어 번역 상태
+                </div>
+                <p style="margin-bottom: 15px; color: #0c5460;">
+                    한국어 원본은 즉시 사용 가능하며, 다른 언어들은 백그라운드에서 자동 번역됩니다.
+                </p>
+                
+                <div class="language-badges">
+                    <span class="language-badge lang-ready">
+                        🇰🇷 한국어 ✅ 즉시 사용 가능
+                    </span>
+                    <span class="language-badge lang-processing">
+                        🇺🇸 English 🔄 자동 번역 중
+                    </span>
+                    <span class="language-badge lang-processing">
+                        🇨🇳 中文 🔄 자동 번역 중
+                    </span>
+                    <span class="language-badge lang-processing">
+                        🇻🇳 Tiếng Việt 🔄 자동 번역 중
+                    </span>
+                    <span class="language-badge lang-processing">
+                        🇹🇭 ไทย 🔄 자동 번역 중
+                    </span>
+                    <span class="language-badge lang-processing">
+                        🇯🇵 日本語 🔄 자동 번역 중
+                    </span>
+                </div>
+                
+                <div style="margin-top: 20px; padding: 15px; background: rgba(255, 255, 255, 0.7); border-radius: 8px;">
+                    <p style="font-size: 14px; color: #0c5460; margin: 0;">
+                        💡 <strong>추가 언어 업로드:</strong> '언어별 영상 관리' 메뉴에서 직접 번역된 영상을 업로드할 수 있습니다.
+                        이렇게 하면 더 정확하고 전문적인 다국어 강의를 제공할 수 있습니다.
+                    </p>
+                </div>
+            </div>
+            
+            <!-- 액션 버튼 -->
+            <div class="action-buttons">
+                <a href="/" class="btn btn-primary">
+                    🚀 새 강의 업로드
+                </a>
+                <a href="/?tab=language-video" class="btn btn-secondary">
+                    🌐 언어별 영상 관리
+                </a>
+            </div>
+            
+            <!-- 공유 안내 -->
+            <div style="background: #e3f2fd; border-radius: 10px; padding: 20px; margin-top: 30px; text-align: center;">
+                <h4 style="color: #1976d2; margin-bottom: 10px;">🌟 강의 공유하기</h4>
+                <p style="color: #424242; margin: 0; line-height: 1.6;">
+                    위의 시청 링크나 QR 코드를 사용하여 학습자들과 강의를 공유하세요.<br>
+                    전 세계 어디서나 모바일, 데스크톱에서 접근 가능합니다!
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 클립보드 복사 함수
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            element.select();
+            element.setSelectionRange(0, 99999); // 모바일 지원
+            
+            try {
+                document.execCommand('copy');
+                
+                // 복사 완료 알림
+                const button = element.nextElementSibling;
+                const originalText = button.textContent;
+                button.textContent = '✅ 복사됨';
+                button.style.background = '#28a745';
+                
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = '#28a745';
+                }, 2000);
+                
+            } catch (err) {
+                alert('복사 실패. 수동으로 복사해주세요.');
+            }
+        }
+        
+        // 페이지 로드 시 애니메이션
+        document.addEventListener('DOMContentLoaded', function() {
+            const sections = document.querySelectorAll('.info-section, .qr-section, .language-status');
+            sections.forEach((section, index) => {
+                section.style.opacity = '0';
+                section.style.transform = 'translateY(20px)';
+                section.style.transition = 'all 0.6s ease';
+                
+                setTimeout(() => {
+                    section.style.opacity = '1';
+                    section.style.transform = 'translateY(0)';
+                }, index * 200);
+            });
+        });
+        
+        console.log('🎉 업로드 완료 페이지 로드됨');
+        console.log('강의 ID:', '{{ result.group_id }}');
+        console.log('시청 링크:', '{{ result.qr_link }}');
+    </script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+# Streamlit 설정 파일 (Railway 최적화)
+[server]
+headless = true
+port = 8080
+address = "0.0.0.0"
+fileWatcherType = "none"
+enableCORS = false
+enableXsrfProtection = false
+maxUploadSize = 5000  # 5GB (Railway 메모리 제한 고려)
+
+[browser]
+gatherUsageStats = false
+serverAddress = "0.0.0.0"
+serverPort = 8080
+
+[client]
+caching = true
+displayEnabled = true
+showErrorDetails = false  # Railway 보안 최적화
+
+[logger]
+level = "info"
+messageFormat = "%(asctime)s %(message)s"
+
+[theme]
+primaryColor = "#667eea"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+font = "sans serif"
+
+# Railway 메모리 최적화
+[global]
+dataFrameSerialization = "legacy"  # 메모리 사용량 감소
+showWarningOnDirectExecution = false
+suppressDeprecationWarnings = true
