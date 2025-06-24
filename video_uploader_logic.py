@@ -300,30 +300,50 @@ class VideoUploaderLogic:
                 self._initialize_firebase()
                 self.db = firestore.client()
                 
-                # Firebase Storage 초기화 (추가됨)
+                # Firebase Storage 초기화 (자동 활성화 체크)
                 try:
                     storage_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET', f"{os.environ['FIREBASE_PROJECT_ID']}.appspot.com")
+                    logger.info(f"🔧 Firebase Storage 연결 시도: {storage_bucket}")
+                    
                     self.firebase_bucket = storage.bucket(storage_bucket)
                     
-                    # 버킷 존재 확인
+                    # 버킷 존재 및 활성화 확인
                     try:
-                        self.firebase_bucket.get_blob('.test')  # 더미 테스트
-                        logger.info("✅ Firebase Storage 초기화 및 버킷 확인 완료")
+                        # 간단한 메타데이터 조회로 활성화 상태 확인
+                        bucket_attrs = self.firebase_bucket._bucket
+                        logger.info("✅ Firebase Storage 초기화 및 버킷 연결 완료")
+                        logger.info(f"📦 버킷: {storage_bucket}")
+                        
                     except Exception as bucket_error:
-                        if '404' in str(bucket_error) or 'does not exist' in str(bucket_error):
-                            logger.warning(f"⚠️ Firebase Storage 버킷이 존재하지 않음: {storage_bucket}")
-                            logger.info("💡 해결 방법:")
-                            logger.info("   1. Firebase 콘솔 (https://console.firebase.google.com) 접속")
-                            logger.info("   2. 프로젝트 선택 > Storage > 시작하기")
-                            logger.info("   3. 보안 규칙을 '테스트 모드'로 설정")
-                            logger.info(f"   4. 또는 FIREBASE_STORAGE_BUCKET 환경변수를 올바른 버킷명으로 설정")
-                            self.firebase_bucket = None
+                        error_msg = str(bucket_error).lower()
+                        
+                        if '404' in error_msg or 'does not exist' in error_msg:
+                            logger.error(f"❌ Firebase Storage 버킷이 존재하지 않음: {storage_bucket}")
+                            logger.error("💡 해결 방법:")
+                            logger.error("   1. Firebase 콘솔 (https://console.firebase.google.com) 접속")
+                            logger.error(f"   2. 프로젝트 '{os.environ.get('FIREBASE_PROJECT_ID')}' 선택")
+                            logger.error("   3. 왼쪽 메뉴에서 'Storage' 클릭")
+                            logger.error("   4. '시작하기' 버튼 클릭하여 Storage 활성화")
+                            logger.error("   5. 위치: asia-northeast1 추천")
+                            logger.error("   6. 보안 규칙: 테스트 모드 선택")
+                            
+                        elif 'permission' in error_msg or 'forbidden' in error_msg:
+                            logger.error("❌ Firebase Storage 권한 오류")
+                            logger.error("💡 Firebase 콘솔에서 Storage 보안 규칙을 테스트 모드로 변경하세요")
+                            
+                        elif 'not enabled' in error_msg or 'disabled' in error_msg:
+                            logger.error("❌ Firebase Storage가 활성화되지 않음")
+                            logger.error("💡 Firebase 콘솔에서 Storage를 활성화해주세요")
+                            
                         else:
-                            logger.info("✅ Firebase Storage 초기화 완료 (권한 확인 생략)")
+                            logger.warning(f"⚠️ Firebase Storage 연결 문제: {bucket_error}")
+                            logger.info("💡 일시적 문제일 수 있습니다. Wasabi 단독으로 계속 진행합니다.")
+                        
+                        self.firebase_bucket = None
                         
                 except Exception as e:
-                    logger.warning(f"⚠️ Firebase Storage 초기화 실패: {e}")
-                    logger.info("💡 Firebase Storage 없이 Wasabi 단일 저장으로 계속 진행")
+                    logger.error(f"❌ Firebase Storage 초기화 실패: {e}")
+                    logger.info("💡 Wasabi 단일 저장으로 계속 진행합니다")
                     self.firebase_bucket = None
                 
                 self._service_health['firebase'] = True
@@ -357,7 +377,7 @@ class VideoUploaderLogic:
                 raise
     
     def _initialize_firebase(self):
-        """Railway 최적화된 Firebase 초기화 (Storage 포함)"""
+        """Firebase Firestore만 초기화 (Storage 제외)"""
         if firebase_admin._apps:
             logger.debug("Firebase 이미 초기화됨")
             return
@@ -379,16 +399,12 @@ class VideoUploaderLogic:
             
             cred = credentials.Certificate(firebase_config)
             
-            # Firebase Storage 버킷 설정 (추가됨)
-            storage_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET', f"{firebase_config['project_id']}.appspot.com")
-            
-            firebase_admin.initialize_app(cred, {
-                'storageBucket': storage_bucket
-            })
-            logger.info("✅ Firebase (Firestore + Storage) 초기화 완료")
+            # Firestore만 초기화 (Storage 제외)
+            firebase_admin.initialize_app(cred)
+            logger.info("✅ Firebase Firestore 초기화 완료 (메타데이터 전용)")
             
         except Exception as e:
-            logger.error(f"❌ Firebase 초기화 실패: {e}")
+            logger.error(f"❌ Firebase Firestore 초기화 실패: {e}")
             logger.error(f"Firebase 초기화 실패 상세: {traceback.format_exc()}")
             raise
     
@@ -736,52 +752,9 @@ class VideoUploaderLogic:
     
     def upload_to_firebase_storage(self, local_path: str, firebase_path: str, 
                                  content_type: str = None) -> Optional[str]:
-        """Firebase Storage 업로드 (이중 저장용) - 버킷 존재 확인 포함"""
-        try:
-            if not self.firebase_bucket:
-                logger.warning("⚠️ Firebase Storage가 초기화되지 않음")
-                return None
-            
-            # 버킷 존재 확인
-            try:
-                # 버킷 메타데이터를 가져와서 존재 여부 확인
-                bucket_info = self.firebase_bucket.get_blob('.test')  # 더미 블롭으로 테스트
-            except Exception as bucket_error:
-                if '404' in str(bucket_error) or 'does not exist' in str(bucket_error):
-                    logger.warning(f"⚠️ Firebase Storage 버킷이 존재하지 않음: {self.firebase_bucket.name}")
-                    logger.info("💡 Firebase 콘솔에서 Storage를 활성화하고 버킷을 생성해주세요")
-                    return None
-                # 다른 종류의 에러는 무시 (권한 등)
-                pass
-            
-            logger.info(f"Firebase Storage 업로드 시작: {firebase_path}")
-            
-            # Firebase Storage에 파일 업로드
-            blob = self.firebase_bucket.blob(firebase_path)
-            
-            if content_type:
-                blob.content_type = content_type
-            
-            # 캐시 제어 메타데이터 (링크 영구화)
-            blob.cache_control = 'public, max-age=31536000'
-            blob.metadata = {
-                'uploaded_at': datetime.now().isoformat(),
-                'permanent_link': 'true'
-            }
-            
-            with open(local_path, 'rb') as file_obj:
-                blob.upload_from_file(file_obj)
-            
-            # 공개 액세스 설정
-            blob.make_public()
-            
-            firebase_url = blob.public_url
-            logger.info(f"✅ Firebase Storage 업로드 완료: {firebase_path} -> {firebase_url}")
-            return firebase_url
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Firebase Storage 업로드 실패: {firebase_path} - {e}")
-            return None
+        """Firebase Storage는 사용하지 않음 - 항상 None 반환"""
+        logger.debug("Firebase Storage는 사용하지 않음 (메타데이터는 Firestore에만 저장)")
+        return None
     
     def upload_video(self, video_path: str, thumbnail_path: Optional[str], group_name: str,
                     main_category: str, sub_category: str, leaf_category: str,
@@ -813,9 +786,7 @@ class VideoUploaderLogic:
                 year_month = timestamp.strftime('%Y%m')
                 base_folder = f"videos/{year_month}/{group_id}_{safe_name}"
                 
-                update_progress(25, "🎬 동영상 업로드 중...")
-                
-                # 동영상 업로드 (이중 저장)
+                # 동영상 업로드 (Wasabi 단독)
                 video_ext = Path(video_path).suffix.lower()
                 ko_filename = translated_filenames.get('ko', safe_name)
                 video_s3_key = f"{base_folder}/{ko_filename}_video_ko{video_ext}"
@@ -828,10 +799,10 @@ class VideoUploaderLogic:
                 video_content_type = content_type_map.get(video_ext, 'video/mp4')
                 
                 def video_progress(percentage, msg):
-                    adjusted_percentage = 25 + (percentage * 0.3)  # 25-55%
+                    adjusted_percentage = 25 + (percentage * 0.4)  # 25-65%
                     update_progress(int(adjusted_percentage), f"🎬 동영상: {msg}")
                 
-                # Wasabi 업로드 (주 스토리지)
+                # Wasabi에만 업로드
                 video_url = self.upload_to_wasabi(
                     video_path,
                     video_s3_key,
@@ -842,18 +813,12 @@ class VideoUploaderLogic:
                 if not video_url:
                     raise Exception("동영상 업로드 실패")
                 
-                # Firebase Storage 백업 업로드
-                firebase_video_url = self.upload_to_firebase_storage(
-                    video_path,
-                    video_s3_key,
-                    video_content_type
-                )
+                logger.info(f"✅ 동영상 Wasabi 업로드 완료: {video_url}")
                 
-                update_progress(60, "🖼️ 썸네일 처리 중...")
+                update_progress(70, "🖼️ 썸네일 처리 중...")
                 
-                # 썸네일 업로드 (이중 저장)
+                # 썸네일 업로드 (Wasabi 단독)
                 thumbnail_url = None
-                firebase_thumbnail_url = None
                 thumbnail_s3_key = None
                 
                 if thumbnail_path:
@@ -867,15 +832,11 @@ class VideoUploaderLogic:
                     }
                     thumb_content_type = thumb_content_type_map.get(thumb_ext, 'image/jpeg')
                     
-                    # Wasabi 썸네일 업로드
+                    # Wasabi에만 썸네일 업로드
                     thumbnail_url = self.upload_to_wasabi(thumbnail_path, thumbnail_s3_key, thumb_content_type)
-                    
-                    # Firebase 썸네일 백업
-                    firebase_thumbnail_url = self.upload_to_firebase_storage(
-                        thumbnail_path, thumbnail_s3_key, thumb_content_type
-                    )
+                    logger.info(f"✅ 썸네일 Wasabi 업로드 완료: {thumbnail_url}")
                 
-                update_progress(75, "📱 QR+썸네일 결합 코드 생성 중...")
+                update_progress(80, "📱 QR+썸네일 결합 코드 생성 중...")
                 
                 # QR+썸네일 결합 코드 생성
                 qr_link = f"https://{self.brunch_domain}/watch/{group_id}"
@@ -886,18 +847,15 @@ class VideoUploaderLogic:
                     qr_title = f"{group_name[:25]}\n({main_category})"
                 
                 qr_url = None
-                firebase_qr_url = None
                 qr_s3_key = None
                 
                 # QR+썸네일 결합 생성
                 if self.create_qr_with_thumbnail(group_id, qr_title, thumbnail_path, qr_temp_path):
                     qr_s3_key = f"{base_folder}/{ko_filename}_qr_combined.png"
                     
-                    # Wasabi QR 업로드
+                    # Wasabi에만 QR 업로드
                     qr_url = self.upload_to_wasabi(qr_temp_path, qr_s3_key, 'image/png')
-                    
-                    # Firebase QR 백업
-                    firebase_qr_url = self.upload_to_firebase_storage(qr_temp_path, qr_s3_key, 'image/png')
+                    logger.info(f"✅ QR코드 Wasabi 업로드 완료: {qr_url}")
                     
                     # 임시 파일 정리
                     try:
@@ -905,9 +863,9 @@ class VideoUploaderLogic:
                     except:
                         pass
                 
-                update_progress(90, "💾 데이터베이스 저장 중...")
+                update_progress(90, "💾 Firestore 메타데이터 저장 중...")
                 
-                # Firestore 저장 (이중 URL 포함)
+                # Firestore에는 메타데이터만 저장
                 main_doc_data = {
                     'group_id': group_id,
                     'group_name': group_name,
@@ -916,7 +874,7 @@ class VideoUploaderLogic:
                     'sub_category': sub_category,
                     'sub_sub_category': leaf_category,
                     'base_folder': base_folder,
-                    'storage_provider': 'dual',  # 이중 저장 표시
+                    'storage_provider': 'wasabi',  # Wasabi 단독 저장
                     'bucket_name': self.bucket_name,
                     'upload_date': date_str,
                     'created_at': firestore.SERVER_TIMESTAMP,
@@ -927,30 +885,24 @@ class VideoUploaderLogic:
                     'supported_video_languages': ['ko'],
                     'brunch_domain': self.brunch_domain,
                     'qr_combined_enabled': True,  # QR+썸네일 결합 표시
-                    'dual_storage_enabled': True,  # 이중 저장 표시
+                    'wasabi_storage_only': True,  # Wasabi 단독 저장 표시
                     'permanent_links': True,  # 영구 링크 보장
                     'railway_optimized': True
                 }
                 
-                # URL 및 백업 URL 추가
+                # Wasabi URL들 추가
                 if qr_url and qr_s3_key:
                     main_doc_data.update({
                         'qr_link': qr_link,
                         'qr_s3_key': qr_s3_key,
-                        'qr_url': qr_url,
-                        'qr_firebase_url': firebase_qr_url
+                        'qr_url': qr_url
                     })
                 
                 if thumbnail_url and thumbnail_s3_key:
                     main_doc_data.update({
                         'thumbnail_s3_key': thumbnail_s3_key,
-                        'thumbnail_url': thumbnail_url,
-                        'thumbnail_firebase_url': firebase_thumbnail_url
+                        'thumbnail_url': thumbnail_url
                     })
-                
-                # Firebase 백업 URL 추가
-                if firebase_video_url:
-                    main_doc_data['video_firebase_url'] = firebase_video_url
                 
                 # 배치 작업으로 최적화
                 batch = self.db.batch()
@@ -959,13 +911,12 @@ class VideoUploaderLogic:
                 main_doc_ref = self.db.collection('uploads').document(group_id)
                 batch.set(main_doc_ref, main_doc_data)
                 
-                # 언어별 영상 문서 (한국어 기본) - 이중 URL 포함
+                # 언어별 영상 문서 (한국어 기본) - Wasabi URL만 저장
                 language_doc_data = {
                     'language_code': 'ko',
                     'language_name': '한국어',
                     'video_s3_key': video_s3_key,
                     'video_url': video_url,
-                    'video_firebase_url': firebase_video_url,
                     'content_type': video_content_type,
                     'file_size': video_metadata['file_size'],
                     'duration_seconds': video_metadata['duration_seconds'],
@@ -976,7 +927,7 @@ class VideoUploaderLogic:
                     'upload_date': date_str,
                     'created_at': firestore.SERVER_TIMESTAMP,
                     'is_original': True,
-                    'dual_storage': True
+                    'storage_provider': 'wasabi'
                 }
                 
                 language_doc_ref = main_doc_ref.collection('language_videos').document('ko')
@@ -1003,21 +954,18 @@ class VideoUploaderLogic:
                     'success': True,
                     'group_id': group_id,
                     'video_url': video_url,
-                    'video_firebase_url': firebase_video_url,
                     'qr_link': qr_link,
                     'qr_url': qr_url,
-                    'qr_firebase_url': firebase_qr_url,
                     'thumbnail_url': thumbnail_url,
-                    'thumbnail_firebase_url': firebase_thumbnail_url,
                     'metadata': video_metadata,
                     'brunch_domain': self.brunch_domain,
                     'qr_combined': True,
-                    'dual_storage': True,
+                    'storage_provider': 'wasabi',
                     'permanent_links': True,
                     'railway_optimized': True
                 }
                 
-                logger.info(f"✅ 완전한 비디오 업로드 성공: {group_name} (ID: {group_id}) - QR+썸네일 결합 및 이중 저장")
+                logger.info(f"✅ 완전한 비디오 업로드 성공: {group_name} (ID: {group_id}) - Wasabi 저장 + Firestore 메타데이터")
                 return result
                 
             except Exception as e:
@@ -1031,7 +979,7 @@ class VideoUploaderLogic:
     
     def upload_language_video(self, video_id: str, language_code: str, video_path: str,
                              progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """언어별 영상 업로드 구현 (이중 저장)"""
+        """언어별 영상 업로드 구현 (Wasabi 단독 저장)"""
         
         with self._railway_memory_context():
             try:
@@ -1083,10 +1031,10 @@ class VideoUploaderLogic:
                 update_progress(40, f"☁️ {language_code.upper()} 영상 업로드 중...")
                 
                 def lang_progress(percentage, msg):
-                    adjusted_percentage = 40 + (percentage * 0.3)  # 40-70%
+                    adjusted_percentage = 40 + (percentage * 0.4)  # 40-80%
                     update_progress(int(adjusted_percentage), f"🌐 {language_code}: {msg}")
                 
-                # Wasabi 업로드
+                # Wasabi에만 업로드
                 video_url = self.upload_to_wasabi(
                     video_path,
                     video_s3_key,
@@ -1097,27 +1045,19 @@ class VideoUploaderLogic:
                 if not video_url:
                     raise Exception("언어별 영상 업로드 실패")
                 
-                update_progress(75, "💾 Firebase 백업 중...")
+                logger.info(f"✅ 언어별 영상 Wasabi 업로드 완료: {video_url}")
                 
-                # Firebase 백업 업로드
-                firebase_video_url = self.upload_to_firebase_storage(
-                    video_path,
-                    video_s3_key,
-                    video_content_type
-                )
-                
-                update_progress(85, "💾 언어별 데이터 저장 중...")
+                update_progress(85, "💾 Firestore 메타데이터 저장 중...")
                 
                 # 배치 업데이트
                 batch = self.db.batch()
                 
-                # 언어별 영상 데이터 (이중 URL 포함)
+                # 언어별 영상 데이터 (Wasabi URL만 저장)
                 language_doc_data = {
                     'language_code': language_code,
                     'language_name': self._get_language_name(language_code),
                     'video_s3_key': video_s3_key,
                     'video_url': video_url,
-                    'video_firebase_url': firebase_video_url,
                     'content_type': video_content_type,
                     'file_size': video_metadata['file_size'],
                     'duration_seconds': video_metadata['duration_seconds'],
@@ -1128,7 +1068,7 @@ class VideoUploaderLogic:
                     'upload_date': datetime.now().strftime('%Y%m%d'),
                     'created_at': firestore.SERVER_TIMESTAMP,
                     'is_original': False,
-                    'dual_storage': True,
+                    'storage_provider': 'wasabi',
                     'railway_uploaded': True
                 }
                 
@@ -1154,15 +1094,14 @@ class VideoUploaderLogic:
                 result = {
                     'success': True,
                     'video_url': video_url,
-                    'video_firebase_url': firebase_video_url,
                     'language_code': language_code,
                     'language_name': self._get_language_name(language_code),
                     'metadata': video_metadata,
-                    'dual_storage': True,
+                    'storage_provider': 'wasabi',
                     'railway_optimized': True
                 }
                 
-                logger.info(f"✅ 언어별 영상 업로드 성공: {video_id} ({language_code}) - 이중 저장")
+                logger.info(f"✅ 언어별 영상 업로드 성공: {video_id} ({language_code}) - Wasabi 저장")
                 return result
                 
             except Exception as e:
@@ -1229,10 +1168,9 @@ class VideoUploaderLogic:
                         'total_file_size': data.get('total_file_size', 0),
                         'qr_link': data.get('qr_link', ''),
                         'qr_url': data.get('qr_url', ''),
-                        'qr_firebase_url': data.get('qr_firebase_url', ''),
                         'brunch_domain': data.get('brunch_domain', self.brunch_domain),
                         'qr_combined': data.get('qr_combined_enabled', False),
-                        'dual_storage': data.get('dual_storage_enabled', False),
+                        'storage_provider': data.get('storage_provider', 'wasabi'),
                         'permanent_links': data.get('permanent_links', False),
                         'railway_optimized': data.get('railway_optimized', False)
                     }
@@ -1286,12 +1224,10 @@ class VideoUploaderLogic:
                 'language_videos': language_videos,
                 'qr_link': data.get('qr_link', ''),
                 'qr_url': data.get('qr_url', ''),
-                'qr_firebase_url': data.get('qr_firebase_url', ''),
                 'thumbnail_url': data.get('thumbnail_url', ''),
-                'thumbnail_firebase_url': data.get('thumbnail_firebase_url', ''),
                 'brunch_domain': data.get('brunch_domain', self.brunch_domain),
                 'qr_combined': data.get('qr_combined_enabled', False),
-                'dual_storage': data.get('dual_storage_enabled', False),
+                'storage_provider': data.get('storage_provider', 'wasabi'),
                 'permanent_links': data.get('permanent_links', False),
                 'railway_optimized': data.get('railway_optimized', False)
             }
@@ -1314,17 +1250,18 @@ class VideoUploaderLogic:
         return language_names.get(language_code, language_code)
     
     def get_service_health(self) -> Dict[str, Any]:
-        """완전한 서비스 상태 확인"""
+        """완전한 서비스 상태 확인 (Wasabi + Firestore)"""
         return {
-            'firebase': self._service_health['firebase'],
-            'firebase_storage': bool(self.firebase_bucket),
+            'firebase_firestore': self._service_health['firebase'],
+            'firebase_storage': False,  # 사용하지 않음
             'wasabi': self._service_health['wasabi'],
             'translator': self._service_health['translator'],
             'memory_usage': self._get_memory_usage(),
             'brunch_domain': self.brunch_domain,
             'single_qr_enabled': True,
             'qr_thumbnail_combined': True,
-            'dual_storage_enabled': True,
+            'storage_provider': 'wasabi_only',
+            'firestore_metadata_only': True,
             'permanent_links_enabled': True,
             'railway_optimized': True,
             'timestamp': datetime.now().isoformat()
