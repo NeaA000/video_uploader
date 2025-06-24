@@ -24,7 +24,7 @@ try:
     from botocore.exceptions import ClientError
     from boto3.s3.transfer import TransferConfig
     import firebase_admin
-    from firebase_admin import credentials, firestore
+    from firebase_admin import credentials, firestore, storage
     from moviepy.video.io.VideoFileClip import VideoFileClip
     from googletrans import Translator
 except ImportError as e:

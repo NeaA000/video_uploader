@@ -978,6 +978,144 @@ def admin_cleanup():
             'error': str(e)
         }), 500
 
+# 캐시 상태 확인 엔드포인트
+@app.route('/admin/cache_status')
+def cache_status():
+    """캐시 상태 확인 (관리용)"""
+    try:
+        with cache_lock:
+            cache_info = []
+            total_cache_size = 0
+            
+            for key, cached_item in file_cache.items():
+                cache_info.append({
+                    'key': key,
+                    'size': len(cached_item['data']),
+                    'content_type': cached_item['content_type'],
+                    'last_access': cached_item['last_access']
+                })
+                total_cache_size += len(cached_item['data'])
+        
+        return jsonify({
+            'success': True,
+            'cache_count': len(file_cache),
+            'total_cache_size': total_cache_size,
+            'max_cache_size': MAX_CACHE_SIZE,
+            'cache_usage_percent': (total_cache_size / MAX_CACHE_SIZE) * 100,
+            'cache_items': cache_info,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# QR 코드 재생성 엔드포인트 (필요시 사용)
+@app.route('/api/admin/regenerate_qr/<video_id>', methods=['POST'])
+def regenerate_qr_code(video_id):
+    """QR 코드 재생성 (관리용)"""
+    try:
+        uploader, _ = safe_get_service_instances()
+        if not uploader:
+            return jsonify({
+                'success': False,
+                'error': '서비스가 준비되지 않았습니다'
+            }), 503
+        
+        # 비디오 정보 확인
+        video_status = uploader.get_upload_status(video_id)
+        if not video_status['success']:
+            return jsonify({
+                'success': False,
+                'error': '영상을 찾을 수 없습니다'
+            }), 404
+        
+        video_data = video_status
+        group_name = video_data.get('group_name', 'Unknown')
+        
+        # QR 코드 재생성
+        with tempfile.TemporaryDirectory() as temp_dir:
+            qr_temp_path = os.path.join(temp_dir, f"qr_regenerated_{video_id}.png")
+            
+            if uploader.create_qr_with_thumbnail(video_id, group_name, None, qr_temp_path):
+                # 새 S3 키 생성
+                base_folder = video_data.get('base_folder', f"videos/{video_id}")
+                qr_s3_key = f"{base_folder}/qr_regenerated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                
+                # Wasabi 업로드
+                qr_url = uploader.upload_to_wasabi(qr_temp_path, qr_s3_key, 'image/png')
+                
+                if qr_url:
+                    # Firestore 업데이트
+                    uploader.db.collection('uploads').document(video_id).update({
+                        'qr_s3_key': qr_s3_key,
+                        'qr_url': qr_url,
+                        'qr_regenerated_at': firestore.SERVER_TIMESTAMP
+                    })
+                    
+                    return jsonify({
+                        'success': True,
+                        'qr_url': qr_url,
+                        'message': 'QR 코드가 성공적으로 재생성되었습니다'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'QR 코드 업로드 실패'
+                    }), 500
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'QR 코드 생성 실패'
+                }), 500
+                
+    except Exception as e:
+        logger.error(f"QR 코드 재생성 실패: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'QR 코드 재생성 중 오류: {str(e)}'
+        }), 500
+
+# 파일 정보 확인 엔드포인트
+@app.route('/api/admin/file_info/<path:s3_key>')
+def get_file_info(s3_key):
+    """파일 정보 확인 (관리용)"""
+    try:
+        uploader, _ = safe_get_service_instances()
+        if not uploader:
+            return jsonify({'error': '서비스가 준비되지 않았습니다'}), 503
+        
+        # Wasabi에서 파일 메타데이터 조회
+        metadata = uploader.get_file_metadata_from_wasabi(s3_key)
+        if not metadata:
+            return jsonify({'error': '파일을 찾을 수 없습니다'}), 404
+        
+        # 프록시 URL 생성
+        if 'qr' in s3_key.lower():
+            proxy_url = f"https://{BRUNCH_DOMAIN}/qr/{s3_key}"
+        elif 'thumbnail' in s3_key.lower():
+            proxy_url = f"https://{BRUNCH_DOMAIN}/thumbnail/{s3_key}"
+        elif any(video_ext in s3_key.lower() for video_ext in ['.mp4', '.avi', '.mov', '.wmv']):
+            proxy_url = f"https://{BRUNCH_DOMAIN}/video/{s3_key}"
+        else:
+            proxy_url = f"https://{BRUNCH_DOMAIN}/file/{s3_key}"
+        
+        return jsonify({
+            'success': True,
+            's3_key': s3_key,
+            'proxy_url': proxy_url,
+            'metadata': metadata,
+            'file_exists': True
+        })
+        
+    except Exception as e:
+        logger.error(f"파일 정보 조회 실패: {s3_key} - {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # Railway 배포용 메인 실행
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))

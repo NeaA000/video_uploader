@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ video_data.group_name }} - 하이브리드 강의 시청</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Malgun Gothic', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2a9d8f 0%, #238b7f 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .video-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .video-player {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+        }
+        
+        video {
+            width: 100%;
+            height: auto;
+            background: #000;
+        }
+        
+        .hybrid-info {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid #2196f3;
+        }
+        
+        .language-selector {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .language-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .language-btn {
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .language-btn:hover {
+            border-color: #2a9d8f;
+            background: rgba(42, 157, 143, 0.1);
+        }
+        
+        .language-btn.active {
+            border-color: #2a9d8f;
+            background: #2a9d8f;
+            color: white;
+        }
+        
+        .language-btn.unavailable {
+            background: #f5f5f5;
+            color: #999;
+            cursor: not-allowed;
+            border-color: #ddd;
+        }
+        
+        .video-info {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .info-item {
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            min-width: 100px;
+            color: #495057;
+        }
+        
+        .info-value {
+            color: #6c757d;
+        }
+        
+        .qr-section {
+            background: #e8f5e8;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .qr-code {
+            max-width: 200px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #dc3545;
+        }
+        
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #28a745;
+        }
+        
+        .back-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #6c757d;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            margin-top: 20px;
+            transition: all 0.3s ease;
+        }
+        
+        .back-btn:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+            }
+            
+            .header, .content {
+                padding: 20px;
+            }
+            
+            .language-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .info-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 {{ video_data.group_name }}</h1>
+            <p>하이브리드 강의 시청 | Railway 프록시 서빙</p>
+        </div>
+        
+        <div class="content">
+            <!-- 하이브리드 시스템 안내 -->
+            {% if video_data.railway_proxy_enabled %}
+            <div class="hybrid-info">
+                <h4>🔄 하이브리드 시스템 활성화</h4>
+                <p><strong>저장소:</strong> Wasabi Storage + Railway 프록시</p>
+                <p><strong>장점:</strong> 영구 URL 보장 + 빠른 접근 속도</p>
+            </div>
+            {% endif %}
+            
+            <!-- 비디오 플레이어 -->
+            <div class="video-section">
+                <h3>📺 강의 영상</h3>
+                {% if video_url %}
+                <div class="video-player">
+                    <video controls preload="metadata">
+                        <source src="{{ video_url }}" type="video/mp4">
+                        <p>죄송합니다. 브라우저가 이 비디오 형식을 지원하지 않습니다.</p>
+                    </video>
+                </div>
+                
+                <!-- 현재 언어 정보 -->
+                <div style="text-align: center; margin-top: 15px;">
+                    <span style="background: #28a745; color: white; padding: 6px 12px; border-radius: 15px; font-size: 14px;">
+                        🌍 현재 언어: {{ supported_languages[actual_language] }}
+                    </span>
+                    {% if has_language_video %}
+                    <span style="background: #17a2b8; color: white; padding: 6px 12px; border-radius: 15px; font-size: 14px; margin-left: 10px;">
+                        ✅ 번역 영상
+                    </span>
+                    {% else %}
+                    <span style="background: #ffc107; color: #333; padding: 6px 12px; border-radius: 15px; font-size: 14px; margin-left: 10px;">
+                        📝 원본 영상
+                    </span>
+                    {% endif %}
+                </div>
+                {% else %}
+                <div class="error-message">
+                    <h4>❌ 영상을 불러올 수 없습니다</h4>
+                    <p>일시적인 문제일 수 있습니다. 잠시 후 다시 시도해주세요.</p>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- 언어 선택 -->
+            <div class="language-selector">
+                <h3>🌍 언어 선택</h3>
+                <p>다른 언어로 강의를 시청하려면 아래 언어를 선택하세요:</p>
+                
+                <div class="language-grid">
+                    <a href="?lang=ko" class="language-btn {% if actual_language == 'ko' %}active{% endif %}">
+                        🇰🇷 한국어 (원본)
+                    </a>
+                    <a href="?lang=en" class="language-btn {% if actual_language == 'en' %}active{% elif 'en' not in video_data.supported_languages %}unavailable{% endif %}">
+                        🇺🇸 English
+                        {% if 'en' not in video_data.supported_languages %}<br><small>준비 중</small>{% endif %}
+                    </a>
+                    <a href="?lang=zh" class="language-btn {% if actual_language == 'zh' %}active{% elif 'zh' not in video_data.supported_languages %}unavailable{% endif %}">
+                        🇨🇳 中文
+                        {% if 'zh' not in video_data.supported_languages %}<br><small>준비 중</small>{% endif %}
+                    </a>
+                    <a href="?lang=vi" class="language-btn {% if actual_language == 'vi' %}active{% elif 'vi' not in video_data.supported_languages %}unavailable{% endif %}">
+                        🇻🇳 Tiếng Việt
+                        {% if 'vi' not in video_data.supported_languages %}<br><small>준비 중</small>{% endif %}
+                    </a>
+                    <a href="?lang=th" class="language-btn {% if actual_language == 'th' %}active{% elif 'th' not in video_data.supported_languages %}unavailable{% endif %}">
+                        🇹🇭 ไทย
+                        {% if 'th' not in video_data.supported_languages %}<br><small>준비 중</small>{% endif %}
+                    </a>
+                    <a href="?lang=ja" class="language-btn {% if actual_language == 'ja' %}active{% elif 'ja' not in video_data.supported_languages %}unavailable{% endif %}">
+                        🇯🇵 日本語
+                        {% if 'ja' not in video_data.supported_languages %}<br><small>준비 중</small>{% endif %}
+                    </a>
+                </div>
+                
+                {% if requested_language != actual_language %}
+                <div style="background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 15px; border-left: 4px solid #ffc107;">
+                    <strong>⚠️ 자동 폴백:</strong> 
+                    {{ supported_languages[requested_language] }} 영상이 준비되지 않아 {{ supported_languages[actual_language] }}로 재생됩니다.
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- 강의 정보 -->
+            <div class="video-info">
+                <h3>📊 강의 정보</h3>
+                <div class="info-item">
+                    <span class="info-label">카테고리:</span>
+                    <span class="info-value">{{ video_data.main_category }} > {{ video_data.sub_category }} > {{ video_data.sub_sub_category }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">업로드일:</span>
+                    <span class="info-value">{{ video_data.upload_date }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">지원 언어:</span>
+                    <span class="info-value">{{ video_data.supported_languages|length }}개 언어 ({{ ', '.join(video_data.supported_languages) }})</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">저장 방식:</span>
+                    <span class="info-value">
+                        {% if video_data.railway_proxy_enabled %}
+                        🔄 하이브리드 (Wasabi + Railway 프록시)
+                        {% else %}
+                        📦 기본 저장소
+                        {% endif %}
+                    </span>
+                </div>
+                {% if video_data.permanent_links %}
+                <div class="info-item">
+                    <span class="info-label">링크 상태:</span>
+                    <span class="info-value">✅ 영구 접근 보장</span>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- QR 코드 -->
+            {% if video_data.qr_url %}
+            <div class="qr-section">
+                <h3>📱 QR 코드 공유</h3>
+                <p>이 QR 코드로 언제든지 강의에 접근할 수 있습니다</p>
+                <img src="{{ video_data.qr_url }}" alt="강의 QR 코드" class="qr-code">
+                <div style="margin-top: 10px;">
+                    <small style="color: #666;">
+                        🔄 하이브리드 시스템으로 영구 접근 보장
+                    </small>
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- 네비게이션 -->
+            <div style="text-align: center;">
+                <a href="/" class="back-btn">🏠 메인 페이지로 돌아가기</a>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 비디오 로드 오류 처리
+        document.querySelector('video')?.addEventListener('error', function(e) {
+            console.error('비디오 로드 오류:', e);
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.innerHTML = `
+                <h4>❌ 비디오 로드 실패</h4>
+                <p>네트워크 문제이거나 일시적인 서버 오류일 수 있습니다.</p>
+                <p>잠시 후 페이지를 새로고침해주세요.</p>
+            `;
+            
+            this.parentNode.replaceChild(errorDiv, this);
+        });
+        
+        // 언어 선택 비활성화 처리
+        document.querySelectorAll('.language-btn.unavailable').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                alert('이 언어의 영상은 아직 준비되지 않았습니다.');
+            });
+        });
+        
+        console.log('🎬 하이브리드 시청 페이지 로드됨');
+        console.log('비디오 ID:', '{{ video_id }}');
+        console.log('현재 언어:', '{{ actual_language }}');
+    
+    </script>
+</body>
+</html>
