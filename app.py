@@ -1,4 +1,4 @@
-# app.py - Flask 백엔드 서버 (Railway 최적화)
+# app.py - Flask 백엔드 서버 (Railway 최적화, Flask 2.2+ 호환)
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
 import os
 import tempfile
@@ -47,12 +47,15 @@ def initialize_services():
         logger.error(f"서비스 초기화 실패: {e}")
         return False
 
-@app.before_first_request
-def startup():
-    """앱 시작 시 실행 (Railway 최적화)"""
-    logger.info("🚀 Flask 백엔드 서버 시작 - Railway 배포")
-    if not initialize_services():
-        logger.error("❌ 서비스 초기화 실패")
+# Flask 2.2+ 호환 - before_request로 변경
+@app.before_request
+def ensure_services():
+    """요청 전 서비스 초기화 확인"""
+    global uploader_service, translator_service
+    if uploader_service is None or translator_service is None:
+        logger.info("🚀 Flask 백엔드 서버 시작 - Railway 배포")
+        if not initialize_services():
+            logger.error("❌ 서비스 초기화 실패")
 
 @app.route('/')
 def index():
@@ -347,9 +350,15 @@ def internal_server_error(error):
 # Railway 배포용 메인 실행
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))  # Railway 포트
-    debug_mode = os.environ.get('FLASK_ENV') == 'development'
+    debug_mode = os.environ.get('DEBUG', 'False').lower() == 'true'
     
     logger.info(f"🚀 Flask 서버 시작 - 포트: {port}")
+    logger.info("🚀 Flask 백엔드 서버 시작 - Railway 배포")
+    
+    # 서비스 초기화
+    if not initialize_services():
+        logger.error("❌ 서비스 초기화 실패")
+        exit(1)
     
     app.run(
         host='0.0.0.0',  # Railway 요구사항
