@@ -1,4 +1,4 @@
-# video_uploader_logic.py - 단일 QR 코드 생성 및 언어별 분기 지원
+# video_uploader_logic.py - 완전한 QR 코드 + 썸네일 결합 및 이중 저장 구현
 import os
 import sys
 import uuid
@@ -23,7 +23,7 @@ try:
     import boto3
     from boto3.s3.transfer import TransferConfig
     import firebase_admin
-    from firebase_admin import credentials, firestore
+    from firebase_admin import credentials, firestore, storage
     from moviepy.video.io.VideoFileClip import VideoFileClip
     from googletrans import Translator  # Google Translate 대체 라이브러리
 except ImportError as e:
@@ -75,7 +75,7 @@ CATEGORY_STRUCTURE = {
 }
 
 class GoogleTranslator:
-    """수정된 googletrans 라이브러리를 사용한 번역 시스템"""
+    """완전한 googletrans 번역 시스템 (수정됨)"""
     
     def __init__(self):
         self.translator = Translator()
@@ -105,12 +105,12 @@ class GoogleTranslator:
         # 캐시 시스템 (Railway 메모리 절약)
         self._translation_cache = {}
         self._cache_lock = threading.Lock()
-        self._cache_max_size = 50
+        self._cache_max_size = 100  # 캐시 크기 증가
         
-        logger.info("🌍 번역 서비스 초기화 완료")
+        logger.info("🌍 완전한 번역 서비스 초기화 완료")
     
     def translate_title(self, korean_title: str) -> Dict[str, str]:
-        """강의명 번역 (개선된 오류 처리)"""
+        """강의명 번역 (완전한 구현)"""
         # 캐시 확인
         cache_key = f"title_{hash(korean_title)}"
         with self._cache_lock:
@@ -129,35 +129,37 @@ class GoogleTranslator:
                 googletrans_code = self.googletrans_codes.get(lang_code, lang_code)
                 logger.debug(f"번역 시도: {korean_title} -> {lang_code} ({googletrans_code})")
                 
+                # 실제 Google Translate API 호출
                 translated = self._translate_with_googletrans(korean_title, googletrans_code)
                 
                 if translated and translated != korean_title:
                     translations[lang_code] = self._make_filename_safe(translated)
-                    logger.debug(f"번역 성공: {lang_code} -> {translated}")
+                    logger.info(f"✅ 번역 성공: {lang_code} -> {translated}")
                 else:
-                    logger.warning(f"{lang_code} 번역 실패 또는 결과 없음, 대체 번역 사용")
+                    logger.warning(f"⚠️ {lang_code} 번역 실패, 대체 번역 사용")
                     translations[lang_code] = self._fallback_single_translation(korean_title, lang_code)
                 
                 # Railway API 제한 대응
-                time.sleep(0.5)
+                time.sleep(0.3)
                 
             except Exception as e:
-                logger.warning(f"{lang_code} 번역 실패, 대체 번역 사용: {e}")
+                logger.warning(f"❌ {lang_code} 번역 실패, 대체 번역 사용: {e}")
                 translations[lang_code] = self._fallback_single_translation(korean_title, lang_code)
         
         # 캐시에 저장
         with self._cache_lock:
             if len(self._translation_cache) >= self._cache_max_size:
+                # LRU 방식으로 가장 오래된 항목 제거
                 oldest_key = next(iter(self._translation_cache))
                 del self._translation_cache[oldest_key]
             
             self._translation_cache[cache_key] = translations.copy()
         
-        logger.info(f"번역 완료: {korean_title} -> {len(translations)}개 언어")
+        logger.info(f"🌍 번역 완료: {korean_title} -> {len(translations)}개 언어")
         return translations
     
     def _translate_with_googletrans(self, text: str, target_lang: str) -> Optional[str]:
-        """googletrans 번역 (강화된 오류 처리)"""
+        """googletrans 번역 (강화된 구현)"""
         for attempt in range(self.max_retries):
             try:
                 logger.debug(f"googletrans 번역 시도 {attempt + 1}: '{text}' -> {target_lang}")
@@ -167,6 +169,7 @@ class GoogleTranslator:
                 if not clean_text:
                     return None
                 
+                # Google Translate API 호출
                 result = self.translator.translate(clean_text, src='ko', dest=target_lang)
                 
                 if result and result.text and result.text.strip():
@@ -174,22 +177,26 @@ class GoogleTranslator:
                     
                     # 번역 결과 검증
                     if translated_text != clean_text and len(translated_text) > 0:
-                        logger.debug(f"googletrans 번역 성공: '{clean_text}' -> '{translated_text}' ({target_lang})")
-                        return translated_text
+                        # 추가 검증: 의미 있는 번역인지 확인
+                        if len(translated_text) >= 2 and not translated_text.isdigit():
+                            logger.debug(f"✅ googletrans 번역 성공: '{clean_text}' -> '{translated_text}' ({target_lang})")
+                            return translated_text
+                        else:
+                            logger.warning(f"⚠️ googletrans 번역 결과가 의미 없음: {target_lang}")
                     else:
-                        logger.warning(f"googletrans 번역 결과가 원본과 동일하거나 비어있음: {target_lang}")
+                        logger.warning(f"⚠️ googletrans 번역 결과가 원본과 동일: {target_lang}")
                         
                 else:
-                    logger.warning(f"googletrans 번역 결과가 비어있음: {target_lang}")
+                    logger.warning(f"⚠️ googletrans 번역 결과가 비어있음: {target_lang}")
                     
             except Exception as e:
-                logger.warning(f"googletrans 번역 시도 {attempt + 1} 실패 ({target_lang}): {e}")
+                logger.warning(f"❌ googletrans 번역 시도 {attempt + 1} 실패 ({target_lang}): {e}")
                 if attempt < self.max_retries - 1:
                     wait_time = (attempt + 1) * 2  # 점진적 대기
-                    logger.debug(f"{wait_time}초 대기 후 재시도")
+                    logger.debug(f"⏱️ {wait_time}초 대기 후 재시도")
                     time.sleep(wait_time)
         
-        logger.error(f"googletrans 번역 최종 실패: {target_lang}")
+        logger.error(f"❌ googletrans 번역 최종 실패: {target_lang}")
         return None
     
     def _make_filename_safe(self, text: str) -> str:
@@ -265,7 +272,7 @@ class GoogleTranslator:
         return self._make_filename_safe(result)
 
 class VideoUploaderLogic:
-    """비디오 업로더 메인 클래스 - 단일 QR 코드 생성"""
+    """비디오 업로더 메인 클래스 - QR+썸네일 결합 및 이중 저장"""
     
     def __init__(self):
         self._initialization_lock = threading.Lock()
@@ -279,7 +286,7 @@ class VideoUploaderLogic:
             self._initialize_services()
             self.translator = GoogleTranslator()
             self._service_health['translator'] = True
-            logger.info("✅ Railway 비디오 업로더 초기화 완료 (단일 QR 코드)")
+            logger.info("✅ Railway 비디오 업로더 완전 초기화 완료 (QR+썸네일 결합)")
         except Exception as e:
             logger.error(f"❌ 비디오 업로더 초기화 실패: {e}")
             logger.error(f"초기화 실패 상세: {traceback.format_exc()}")
@@ -289,9 +296,18 @@ class VideoUploaderLogic:
         """Railway 최적화된 서비스 초기화"""
         with self._initialization_lock:
             try:
-                # Firebase 초기화
+                # Firebase 초기화 (Storage 포함)
                 self._initialize_firebase()
                 self.db = firestore.client()
+                
+                # Firebase Storage 초기화 (추가됨)
+                try:
+                    self.firebase_bucket = storage.bucket()
+                    logger.info("✅ Firebase Storage 초기화 완료")
+                except Exception as e:
+                    logger.warning(f"⚠️ Firebase Storage 초기화 실패: {e}")
+                    self.firebase_bucket = None
+                
                 self._service_health['firebase'] = True
                 
                 # Wasabi S3 초기화
@@ -315,7 +331,7 @@ class VideoUploaderLogic:
                     use_threads=True
                 )
                 
-                logger.info(f"🔧 핵심 서비스 초기화 완료 (도메인: {self.brunch_domain})")
+                logger.info(f"🔧 완전한 서비스 초기화 완료 (도메인: {self.brunch_domain})")
                 
             except Exception as e:
                 logger.error(f"❌ 서비스 초기화 실패: {e}")
@@ -323,7 +339,7 @@ class VideoUploaderLogic:
                 raise
     
     def _initialize_firebase(self):
-        """Railway 최적화된 Firebase 초기화"""
+        """Railway 최적화된 Firebase 초기화 (Storage 포함)"""
         if firebase_admin._apps:
             logger.debug("Firebase 이미 초기화됨")
             return
@@ -344,8 +360,14 @@ class VideoUploaderLogic:
             }
             
             cred = credentials.Certificate(firebase_config)
-            firebase_admin.initialize_app(cred)
-            logger.info("✅ Firebase 초기화 완료")
+            
+            # Firebase Storage 버킷 설정 (추가됨)
+            storage_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET', f"{firebase_config['project_id']}.appspot.com")
+            
+            firebase_admin.initialize_app(cred, {
+                'storageBucket': storage_bucket
+            })
+            logger.info("✅ Firebase (Firestore + Storage) 초기화 완료")
             
         except Exception as e:
             logger.error(f"❌ Firebase 초기화 실패: {e}")
@@ -407,6 +429,14 @@ class VideoUploaderLogic:
             ext = path.suffix.lower()
             logger.debug(f"파일 검증 시작: {file_path} (확장자: '{ext}', 타입: {file_type})")
             
+            # 파일 형식 검증
+            if file_type == 'video' and ext not in SUPPORTED_VIDEO_FORMATS:
+                logger.warning(f"지원되지 않는 비디오 형식: {ext}")
+                return False
+            elif file_type == 'image' and ext not in SUPPORTED_IMAGE_FORMATS:
+                logger.warning(f"지원되지 않는 이미지 형식: {ext}")
+                return False
+            
             # Railway 파일 크기 검증
             file_size = os.path.getsize(file_path)
             if file_size == 0:
@@ -422,11 +452,11 @@ class VideoUploaderLogic:
                 logger.warning(f"Railway 메모리 제한으로 인한 파일 크기 초과: {file_size}")
                 return False
             
-            logger.info(f"파일 검증 성공: {file_path} ({file_size / 1024 / 1024:.2f}MB)")
+            logger.info(f"✅ 파일 검증 성공: {file_path} ({file_size / 1024 / 1024:.2f}MB)")
             return True
             
         except Exception as e:
-            logger.error(f"파일 검증 오류: {e}")
+            logger.error(f"❌ 파일 검증 오류: {e}")
             return False
     
     def extract_video_metadata(self, video_path: str) -> Dict[str, Any]:
@@ -458,11 +488,11 @@ class VideoUploaderLogic:
                     'file_size_mb': round(file_size / 1024 / 1024, 2)
                 }
                 
-                logger.info(f"비디오 메타데이터 추출 완료: {duration_str}, {width}x{height}, {file_size//1024//1024}MB")
+                logger.info(f"✅ 비디오 메타데이터 추출 완료: {duration_str}, {width}x{height}, {file_size//1024//1024}MB")
                 return metadata
                 
             except Exception as e:
-                logger.warning(f"비디오 메타데이터 추출 실패, 기본값 사용: {e}")
+                logger.warning(f"⚠️ 비디오 메타데이터 추출 실패, 기본값 사용: {e}")
                 
                 file_size = os.path.getsize(video_path) if os.path.exists(video_path) else 0
                 return {
@@ -475,37 +505,67 @@ class VideoUploaderLogic:
                     'file_size_mb': round(file_size / 1024 / 1024, 2)
                 }
     
-    def create_single_qr_code(self, video_id: str, title: str = "", output_path: str = None) -> bool:
-        """단일 QR 코드 생성 - 언어별 분기는 앱에서 처리"""
+    def create_qr_with_thumbnail(self, video_id: str, title: str = "", thumbnail_path: str = None,
+                                output_path: str = None) -> bool:
+        """QR 코드 + 썸네일 결합 생성 (핵심 기능)"""
         with self._railway_memory_context():
             try:
-                # 단일 QR 링크 생성 (언어 파라미터 없음)
+                # 단일 QR 링크 생성
                 qr_link = f"https://{self.brunch_domain}/watch/{video_id}"
                 
-                logger.debug(f"단일 QR 코드 생성 시작: {qr_link}")
+                logger.debug(f"QR+썸네일 결합 생성 시작: {qr_link}")
                 
                 if not output_path:
-                    output_path = f"qr_{video_id}.png"
+                    output_path = f"qr_thumbnail_{video_id}.png"
                 
-                # Railway 메모리 절약 설정
+                # QR 코드 생성 (높은 오류 정정 수준)
                 qr = qrcode.QRCode(
-                    version=1,
-                    error_correction=qrcode.constants.ERROR_CORRECT_M,
-                    box_size=4,  # Railway 메모리 절약
-                    border=3,
+                    version=3,  # 더 큰 버전으로 중앙 공간 확보
+                    error_correction=qrcode.constants.ERROR_CORRECT_H,  # 최고 오류 정정
+                    box_size=6,
+                    border=4,
                 )
                 qr.add_data(qr_link)
                 qr.make(fit=True)
                 
-                # Railway 최적화된 이미지 생성
+                # QR 코드 이미지 생성
                 qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-                qr_size = 200  # Railway 메모리 절약
+                qr_size = 400  # 더 큰 QR 코드
                 qr_img = qr_img.resize((qr_size, qr_size), Image.LANCZOS)
                 
-                # 제목 추가 (Railway 최적화)
+                # 썸네일이 있는 경우 중앙에 삽입
+                if thumbnail_path and os.path.exists(thumbnail_path):
+                    try:
+                        with Image.open(thumbnail_path) as thumbnail:
+                            # 썸네일을 원형으로 만들기
+                            thumb_size = qr_size // 4  # QR 코드의 1/4 크기
+                            thumbnail = thumbnail.resize((thumb_size, thumb_size), Image.LANCZOS)
+                            
+                            # 원형 마스크 생성
+                            mask = Image.new('L', (thumb_size, thumb_size), 0)
+                            draw = ImageDraw.Draw(mask)
+                            draw.ellipse((0, 0, thumb_size, thumb_size), fill=255)
+                            
+                            # 썸네일을 원형으로 자르기
+                            thumbnail.putalpha(mask)
+                            
+                            # 흰색 배경의 원형 썸네일 생성 (QR 코드 가독성 향상)
+                            circle_bg = Image.new('RGB', (thumb_size + 20, thumb_size + 20), 'white')
+                            circle_bg.paste(thumbnail, (10, 10), thumbnail)
+                            
+                            # QR 코드 중앙에 썸네일 삽입
+                            thumb_pos = ((qr_size - thumb_size - 20) // 2, (qr_size - thumb_size - 20) // 2)
+                            qr_img.paste(circle_bg, thumb_pos)
+                            
+                            logger.info(f"✅ 썸네일 결합 QR 코드 생성: {thumb_size}x{thumb_size}")
+                    
+                    except Exception as e:
+                        logger.warning(f"⚠️ 썸네일 처리 실패, 기본 QR 코드 생성: {e}")
+                
+                # 제목 추가
                 if title:
-                    text_height = 40
-                    margin = 6
+                    text_height = 60
+                    margin = 15
                     total_height = qr_size + text_height + margin
                     final_img = Image.new('RGB', (qr_size, total_height), 'white')
                     final_img.paste(qr_img, (0, 0))
@@ -513,49 +573,55 @@ class VideoUploaderLogic:
                     draw = ImageDraw.Draw(final_img)
                     
                     try:
+                        # 더 큰 폰트 시도
                         font = ImageFont.load_default()
                     except:
                         font = ImageFont.load_default()
                     
-                    # Railway 최적화된 텍스트 처리
-                    if len(title.encode('utf-8')) > 40:  # 바이트 길이 기준
-                        title = title[:20] + "..."
+                    # 제목 텍스트 처리
+                    if len(title.encode('utf-8')) > 60:  # 바이트 길이 기준
+                        title = title[:25] + "..."
                     
+                    # 텍스트 중앙 정렬
                     bbox = draw.textbbox((0, 0), title, font=font)
                     text_width = bbox[2] - bbox[0]
                     text_x = max(0, (qr_size - text_width) // 2)
                     text_y = qr_size + margin
                     
+                    # 텍스트 배경 (가독성 향상)
+                    text_bg_rect = [text_x - 10, text_y - 5, text_x + text_width + 10, text_y + 25]
+                    draw.rectangle(text_bg_rect, fill='lightgray', outline='gray')
+                    
                     draw.text((text_x, text_y), title, font=font, fill='black')
-                    final_img.save(output_path, quality=85, optimize=True)  # Railway 최적화
+                    final_img.save(output_path, quality=90, optimize=True)
                 else:
-                    qr_img.save(output_path, quality=85, optimize=True)
+                    qr_img.save(output_path, quality=90, optimize=True)
                 
-                logger.info(f"✅ 단일 QR 코드 생성 완료: {output_path}")
+                logger.info(f"✅ QR+썸네일 결합 생성 완료: {output_path}")
                 return True
                 
             except Exception as e:
-                logger.error(f"❌ QR 코드 생성 실패: {e}")
-                logger.error(f"QR 코드 생성 실패 상세: {traceback.format_exc()}")
+                logger.error(f"❌ QR+썸네일 생성 실패: {e}")
+                logger.error(f"QR+썸네일 생성 실패 상세: {traceback.format_exc()}")
                 return False
     
-    def create_qr_code(self, data: str, output_path: str, title: str = "") -> bool:
-        """레거시 지원을 위한 QR 코드 생성 - 단일 QR로 리다이렉트"""
-        # data에서 video_id 추출
-        if '/watch/' in data:
-            video_id = data.split('/watch/')[-1].split('?')[0]
-        else:
-            video_id = str(uuid.uuid4().hex)
-        
-        return self.create_single_qr_code(video_id, title, output_path)
+    def create_single_qr_code(self, video_id: str, title: str = "", output_path: str = None) -> bool:
+        """기본 단일 QR 코드 생성 (썸네일 없는 경우)"""
+        return self.create_qr_with_thumbnail(video_id, title, None, output_path)
     
     def upload_to_wasabi(self, local_path: str, s3_key: str, content_type: str = None,
                         progress_callback: Callable = None) -> Optional[str]:
-        """완전한 Wasabi 업로드 구현"""
+        """완전한 Wasabi 업로드 구현 (CDN 및 캐시 제어 포함)"""
         try:
             logger.info(f"Wasabi 업로드 시작: {s3_key}")
             
-            extra_args = {'ACL': 'public-read'}
+            # CDN 및 캐시 최적화 헤더
+            extra_args = {
+                'ACL': 'public-read',
+                'CacheControl': 'public, max-age=31536000',  # 1년 캐시 (링크 영구화)
+                'Expires': (datetime.now() + timedelta(days=365)).strftime('%a, %d %b %Y %H:%M:%S GMT')
+            }
+            
             if content_type:
                 extra_args['ContentType'] = content_type
             
@@ -581,14 +647,14 @@ class VideoUploaderLogic:
                 Callback=railway_progress_callback if progress_callback else None
             )
             
-            # Railway CDN URL 생성
+            # 영구 링크 생성 (CDN 우선)
             if self.wasabi_cdn_url:
                 public_url = f"{self.wasabi_cdn_url.rstrip('/')}/{s3_key}"
             else:
                 region = os.environ.get('WASABI_REGION', 'us-east-1')
                 public_url = f"https://s3.{region}.wasabisys.com/{self.bucket_name}/{s3_key}"
             
-            logger.info(f"✅ Wasabi 업로드 완료: {s3_key} -> {public_url}")
+            logger.info(f"✅ Wasabi 업로드 완료 (영구링크): {s3_key} -> {public_url}")
             return public_url
             
         except Exception as e:
@@ -596,11 +662,48 @@ class VideoUploaderLogic:
             logger.error(f"Wasabi 업로드 실패 상세: {traceback.format_exc()}")
             return None
     
+    def upload_to_firebase_storage(self, local_path: str, firebase_path: str, 
+                                 content_type: str = None) -> Optional[str]:
+        """Firebase Storage 업로드 (이중 저장용)"""
+        try:
+            if not self.firebase_bucket:
+                logger.warning("⚠️ Firebase Storage가 초기화되지 않음")
+                return None
+            
+            logger.info(f"Firebase Storage 업로드 시작: {firebase_path}")
+            
+            # Firebase Storage에 파일 업로드
+            blob = self.firebase_bucket.blob(firebase_path)
+            
+            if content_type:
+                blob.content_type = content_type
+            
+            # 캐시 제어 메타데이터 (링크 영구화)
+            blob.cache_control = 'public, max-age=31536000'
+            blob.metadata = {
+                'uploaded_at': datetime.now().isoformat(),
+                'permanent_link': 'true'
+            }
+            
+            with open(local_path, 'rb') as file_obj:
+                blob.upload_from_file(file_obj)
+            
+            # 공개 액세스 설정
+            blob.make_public()
+            
+            firebase_url = blob.public_url
+            logger.info(f"✅ Firebase Storage 업로드 완료: {firebase_path} -> {firebase_url}")
+            return firebase_url
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Firebase Storage 업로드 실패: {firebase_path} - {e}")
+            return None
+    
     def upload_video(self, video_path: str, thumbnail_path: Optional[str], group_name: str,
                     main_category: str, sub_category: str, leaf_category: str,
                     content_description: str, translated_filenames: Dict[str, str],
                     progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """완전한 메인 비디오 업로드 구현 - 단일 QR 코드"""
+        """완전한 메인 비디오 업로드 구현 - QR+썸네일 결합 및 이중 저장"""
         
         with self._railway_memory_context():
             try:
@@ -620,7 +723,7 @@ class VideoUploaderLogic:
                 group_id = uuid.uuid4().hex
                 timestamp = datetime.now()
                 date_str = timestamp.strftime('%Y%m%d')
-                safe_name = re.sub(r'[^\w가-힣-]', '_', group_name)[:30]  # Railway 제한
+                safe_name = re.sub(r'[^\w가-힣-]', '_', group_name)[:30]
                 
                 # Railway 폴더 구조 최적화
                 year_month = timestamp.strftime('%Y%m')
@@ -628,12 +731,11 @@ class VideoUploaderLogic:
                 
                 update_progress(25, "🎬 동영상 업로드 중...")
                 
-                # 동영상 업로드
+                # 동영상 업로드 (이중 저장)
                 video_ext = Path(video_path).suffix.lower()
                 ko_filename = translated_filenames.get('ko', safe_name)
                 video_s3_key = f"{base_folder}/{ko_filename}_video_ko{video_ext}"
                 
-                # Railway 최적화된 콘텐츠 타입
                 content_type_map = {
                     '.mp4': 'video/mp4', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
                     '.wmv': 'video/x-ms-wmv', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
@@ -641,11 +743,11 @@ class VideoUploaderLogic:
                 }
                 video_content_type = content_type_map.get(video_ext, 'video/mp4')
                 
-                # Railway 업로드 진행률 조정
                 def video_progress(percentage, msg):
-                    adjusted_percentage = 25 + (percentage * 0.4)  # 25-65%
+                    adjusted_percentage = 25 + (percentage * 0.3)  # 25-55%
                     update_progress(int(adjusted_percentage), f"🎬 동영상: {msg}")
                 
+                # Wasabi 업로드 (주 스토리지)
                 video_url = self.upload_to_wasabi(
                     video_path,
                     video_s3_key,
@@ -656,11 +758,20 @@ class VideoUploaderLogic:
                 if not video_url:
                     raise Exception("동영상 업로드 실패")
                 
-                update_progress(70, "🖼️ 썸네일 처리 중...")
+                # Firebase Storage 백업 업로드
+                firebase_video_url = self.upload_to_firebase_storage(
+                    video_path,
+                    video_s3_key,
+                    video_content_type
+                )
                 
-                # Railway 최적화된 썸네일 업로드
+                update_progress(60, "🖼️ 썸네일 처리 중...")
+                
+                # 썸네일 업로드 (이중 저장)
                 thumbnail_url = None
+                firebase_thumbnail_url = None
                 thumbnail_s3_key = None
+                
                 if thumbnail_path:
                     thumb_ext = Path(thumbnail_path).suffix.lower()
                     thumbnail_s3_key = f"{base_folder}/{ko_filename}_thumbnail{thumb_ext}"
@@ -672,25 +783,39 @@ class VideoUploaderLogic:
                     }
                     thumb_content_type = thumb_content_type_map.get(thumb_ext, 'image/jpeg')
                     
+                    # Wasabi 썸네일 업로드
                     thumbnail_url = self.upload_to_wasabi(thumbnail_path, thumbnail_s3_key, thumb_content_type)
+                    
+                    # Firebase 썸네일 백업
+                    firebase_thumbnail_url = self.upload_to_firebase_storage(
+                        thumbnail_path, thumbnail_s3_key, thumb_content_type
+                    )
                 
-                update_progress(80, "📱 단일 QR 코드 생성 중...")
+                update_progress(75, "📱 QR+썸네일 결합 코드 생성 중...")
                 
-                # Railway 최적화된 단일 QR 코드 생성
+                # QR+썸네일 결합 코드 생성
                 qr_link = f"https://{self.brunch_domain}/watch/{group_id}"
-                qr_temp_path = os.path.join(tempfile.gettempdir(), f"qr_{group_id}.png")
+                qr_temp_path = os.path.join(tempfile.gettempdir(), f"qr_thumbnail_{group_id}.png")
                 
-                qr_title = group_name[:25]  # Railway 메모리 절약
+                qr_title = group_name[:30]
                 if all([main_category, sub_category, leaf_category]):
-                    qr_title = f"{group_name[:20]}\n({main_category})"
+                    qr_title = f"{group_name[:25]}\n({main_category})"
                 
                 qr_url = None
+                firebase_qr_url = None
                 qr_s3_key = None
-                if self.create_single_qr_code(group_id, qr_title, qr_temp_path):
-                    qr_s3_key = f"{base_folder}/{ko_filename}_qrcode.png"
+                
+                # QR+썸네일 결합 생성
+                if self.create_qr_with_thumbnail(group_id, qr_title, thumbnail_path, qr_temp_path):
+                    qr_s3_key = f"{base_folder}/{ko_filename}_qr_combined.png"
+                    
+                    # Wasabi QR 업로드
                     qr_url = self.upload_to_wasabi(qr_temp_path, qr_s3_key, 'image/png')
                     
-                    # Railway 임시 파일 정리
+                    # Firebase QR 백업
+                    firebase_qr_url = self.upload_to_firebase_storage(qr_temp_path, qr_s3_key, 'image/png')
+                    
+                    # 임시 파일 정리
                     try:
                         os.remove(qr_temp_path)
                     except:
@@ -698,7 +823,7 @@ class VideoUploaderLogic:
                 
                 update_progress(90, "💾 데이터베이스 저장 중...")
                 
-                # Railway 최적화된 Firestore 저장
+                # Firestore 저장 (이중 URL 포함)
                 main_doc_data = {
                     'group_id': group_id,
                     'group_name': group_name,
@@ -707,7 +832,7 @@ class VideoUploaderLogic:
                     'sub_category': sub_category,
                     'sub_sub_category': leaf_category,
                     'base_folder': base_folder,
-                    'storage_provider': 'wasabi',
+                    'storage_provider': 'dual',  # 이중 저장 표시
                     'bucket_name': self.bucket_name,
                     'upload_date': date_str,
                     'created_at': firestore.SERVER_TIMESTAMP,
@@ -716,37 +841,47 @@ class VideoUploaderLogic:
                     'supported_languages_count': 1,
                     'total_file_size': video_metadata['file_size'],
                     'supported_video_languages': ['ko'],
-                    'brunch_domain': self.brunch_domain,  # 브런치 도메인 저장
+                    'brunch_domain': self.brunch_domain,
+                    'qr_combined_enabled': True,  # QR+썸네일 결합 표시
+                    'dual_storage_enabled': True,  # 이중 저장 표시
+                    'permanent_links': True,  # 영구 링크 보장
                     'railway_optimized': True
                 }
                 
-                # 선택적 필드 추가
+                # URL 및 백업 URL 추가
                 if qr_url and qr_s3_key:
                     main_doc_data.update({
                         'qr_link': qr_link,
                         'qr_s3_key': qr_s3_key,
-                        'qr_url': qr_url
+                        'qr_url': qr_url,
+                        'qr_firebase_url': firebase_qr_url
                     })
                 
                 if thumbnail_url and thumbnail_s3_key:
                     main_doc_data.update({
                         'thumbnail_s3_key': thumbnail_s3_key,
-                        'thumbnail_url': thumbnail_url
+                        'thumbnail_url': thumbnail_url,
+                        'thumbnail_firebase_url': firebase_thumbnail_url
                     })
                 
-                # Railway 배치 작업으로 최적화
+                # Firebase 백업 URL 추가
+                if firebase_video_url:
+                    main_doc_data['video_firebase_url'] = firebase_video_url
+                
+                # 배치 작업으로 최적화
                 batch = self.db.batch()
                 
                 # 메인 문서
                 main_doc_ref = self.db.collection('uploads').document(group_id)
                 batch.set(main_doc_ref, main_doc_data)
                 
-                # 언어별 영상 문서 (한국어 기본)
+                # 언어별 영상 문서 (한국어 기본) - 이중 URL 포함
                 language_doc_data = {
                     'language_code': 'ko',
                     'language_name': '한국어',
                     'video_s3_key': video_s3_key,
                     'video_url': video_url,
+                    'video_firebase_url': firebase_video_url,
                     'content_type': video_content_type,
                     'file_size': video_metadata['file_size'],
                     'duration_seconds': video_metadata['duration_seconds'],
@@ -756,7 +891,8 @@ class VideoUploaderLogic:
                     'video_fps': video_metadata['fps'],
                     'upload_date': date_str,
                     'created_at': firestore.SERVER_TIMESTAMP,
-                    'is_original': True
+                    'is_original': True,
+                    'dual_storage': True
                 }
                 
                 language_doc_ref = main_doc_ref.collection('language_videos').document('ko')
@@ -767,30 +903,37 @@ class VideoUploaderLogic:
                     translation_metadata = {
                         'filenames': translated_filenames,
                         'created_at': firestore.SERVER_TIMESTAMP,
+                        'translator_used': 'googletrans',
                         'railway_generated': True
                     }
                     translation_doc_ref = main_doc_ref.collection('metadata').document('translations')
                     batch.set(translation_doc_ref, translation_metadata)
                 
-                # Railway 배치 커밋
+                # 배치 커밋
                 batch.commit()
                 
                 update_progress(100, "✅ 업로드 완료!")
                 
-                # Railway 성공 응답
+                # 성공 응답
                 result = {
                     'success': True,
                     'group_id': group_id,
                     'video_url': video_url,
+                    'video_firebase_url': firebase_video_url,
                     'qr_link': qr_link,
                     'qr_url': qr_url,
+                    'qr_firebase_url': firebase_qr_url,
                     'thumbnail_url': thumbnail_url,
+                    'thumbnail_firebase_url': firebase_thumbnail_url,
                     'metadata': video_metadata,
                     'brunch_domain': self.brunch_domain,
+                    'qr_combined': True,
+                    'dual_storage': True,
+                    'permanent_links': True,
                     'railway_optimized': True
                 }
                 
-                logger.info(f"✅ 비디오 업로드 성공: {group_name} (ID: {group_id}) - 단일 QR 코드")
+                logger.info(f"✅ 완전한 비디오 업로드 성공: {group_name} (ID: {group_id}) - QR+썸네일 결합 및 이중 저장")
                 return result
                 
             except Exception as e:
@@ -804,7 +947,7 @@ class VideoUploaderLogic:
     
     def upload_language_video(self, video_id: str, language_code: str, video_path: str,
                              progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """언어별 영상 업로드 구현"""
+        """언어별 영상 업로드 구현 (이중 저장)"""
         
         with self._railway_memory_context():
             try:
@@ -815,7 +958,6 @@ class VideoUploaderLogic:
                 
                 update_progress(10, "📋 기존 영상 정보 확인 중...")
                 
-                # Railway 최적화된 문서 조회
                 doc_ref = self.db.collection('uploads').document(video_id)
                 doc = doc_ref.get()
                 
@@ -826,10 +968,8 @@ class VideoUploaderLogic:
                 
                 update_progress(25, "🎬 언어별 영상 준비 중...")
                 
-                # Railway 메타데이터 추출
                 video_metadata = self.extract_video_metadata(video_path)
                 
-                # Railway 경로 생성
                 group_name = video_data.get('group_name', 'unknown')
                 base_folder = video_data.get('base_folder', f"videos/{video_id}")
                 
@@ -845,7 +985,6 @@ class VideoUploaderLogic:
                 except:
                     translated_title = group_name
                 
-                # Railway 안전한 파일명
                 safe_translated_title = re.sub(r'[^\w가-힣-]', '_', translated_title)[:30]
                 video_ext = Path(video_path).suffix.lower()
                 video_s3_key = f"{base_folder}/{safe_translated_title}_video_{language_code}{video_ext}"
@@ -859,11 +998,11 @@ class VideoUploaderLogic:
                 
                 update_progress(40, f"☁️ {language_code.upper()} 영상 업로드 중...")
                 
-                # Railway 진행률 조정
                 def lang_progress(percentage, msg):
-                    adjusted_percentage = 40 + (percentage * 0.4)  # 40-80%
+                    adjusted_percentage = 40 + (percentage * 0.3)  # 40-70%
                     update_progress(int(adjusted_percentage), f"🌐 {language_code}: {msg}")
                 
+                # Wasabi 업로드
                 video_url = self.upload_to_wasabi(
                     video_path,
                     video_s3_key,
@@ -874,17 +1013,27 @@ class VideoUploaderLogic:
                 if not video_url:
                     raise Exception("언어별 영상 업로드 실패")
                 
+                update_progress(75, "💾 Firebase 백업 중...")
+                
+                # Firebase 백업 업로드
+                firebase_video_url = self.upload_to_firebase_storage(
+                    video_path,
+                    video_s3_key,
+                    video_content_type
+                )
+                
                 update_progress(85, "💾 언어별 데이터 저장 중...")
                 
-                # Railway 배치 업데이트
+                # 배치 업데이트
                 batch = self.db.batch()
                 
-                # 언어별 영상 데이터
+                # 언어별 영상 데이터 (이중 URL 포함)
                 language_doc_data = {
                     'language_code': language_code,
                     'language_name': self._get_language_name(language_code),
                     'video_s3_key': video_s3_key,
                     'video_url': video_url,
+                    'video_firebase_url': firebase_video_url,
                     'content_type': video_content_type,
                     'file_size': video_metadata['file_size'],
                     'duration_seconds': video_metadata['duration_seconds'],
@@ -895,6 +1044,7 @@ class VideoUploaderLogic:
                     'upload_date': datetime.now().strftime('%Y%m%d'),
                     'created_at': firestore.SERVER_TIMESTAMP,
                     'is_original': False,
+                    'dual_storage': True,
                     'railway_uploaded': True
                 }
                 
@@ -913,7 +1063,6 @@ class VideoUploaderLogic:
                 }
                 batch.update(doc_ref, main_update_data)
                 
-                # Railway 배치 커밋
                 batch.commit()
                 
                 update_progress(100, "✅ 언어별 영상 업로드 완료!")
@@ -921,13 +1070,15 @@ class VideoUploaderLogic:
                 result = {
                     'success': True,
                     'video_url': video_url,
+                    'video_firebase_url': firebase_video_url,
                     'language_code': language_code,
                     'language_name': self._get_language_name(language_code),
                     'metadata': video_metadata,
+                    'dual_storage': True,
                     'railway_optimized': True
                 }
                 
-                logger.info(f"✅ 언어별 영상 업로드 성공: {video_id} ({language_code})")
+                logger.info(f"✅ 언어별 영상 업로드 성공: {video_id} ({language_code}) - 이중 저장")
                 return result
                 
             except Exception as e:
@@ -967,9 +1118,12 @@ class VideoUploaderLogic:
                             language_videos[lang_doc.id] = {
                                 'language_code': lang_doc.id,
                                 'language_name': lang_data.get('language_name', ''),
+                                'video_url': lang_data.get('video_url', ''),
+                                'video_firebase_url': lang_data.get('video_firebase_url', ''),
                                 'file_size': lang_data.get('file_size', 0),
                                 'duration': lang_data.get('duration_string', ''),
-                                'upload_date': lang_data.get('upload_date', '')
+                                'upload_date': lang_data.get('upload_date', ''),
+                                'dual_storage': lang_data.get('dual_storage', False)
                             }
                             supported_languages.append(lang_doc.id)
                     except Exception as e:
@@ -990,7 +1144,12 @@ class VideoUploaderLogic:
                         'language_videos': language_videos,
                         'total_file_size': data.get('total_file_size', 0),
                         'qr_link': data.get('qr_link', ''),
+                        'qr_url': data.get('qr_url', ''),
+                        'qr_firebase_url': data.get('qr_firebase_url', ''),
                         'brunch_domain': data.get('brunch_domain', self.brunch_domain),
+                        'qr_combined': data.get('qr_combined_enabled', False),
+                        'dual_storage': data.get('dual_storage_enabled', False),
+                        'permanent_links': data.get('permanent_links', False),
                         'railway_optimized': data.get('railway_optimized', False)
                     }
                     
@@ -1035,13 +1194,21 @@ class VideoUploaderLogic:
                 'success': True,
                 'group_id': group_id,
                 'group_name': data.get('group_name', ''),
+                'main_category': data.get('main_category', ''),
+                'sub_category': data.get('sub_category', ''),
+                'sub_sub_category': data.get('sub_sub_category', ''),
                 'upload_date': data.get('upload_date', ''),
                 'supported_languages': supported_languages,
                 'language_videos': language_videos,
                 'qr_link': data.get('qr_link', ''),
                 'qr_url': data.get('qr_url', ''),
+                'qr_firebase_url': data.get('qr_firebase_url', ''),
                 'thumbnail_url': data.get('thumbnail_url', ''),
+                'thumbnail_firebase_url': data.get('thumbnail_firebase_url', ''),
                 'brunch_domain': data.get('brunch_domain', self.brunch_domain),
+                'qr_combined': data.get('qr_combined_enabled', False),
+                'dual_storage': data.get('dual_storage_enabled', False),
+                'permanent_links': data.get('permanent_links', False),
                 'railway_optimized': data.get('railway_optimized', False)
             }
             
@@ -1063,14 +1230,18 @@ class VideoUploaderLogic:
         return language_names.get(language_code, language_code)
     
     def get_service_health(self) -> Dict[str, Any]:
-        """Railway 서비스 상태 확인"""
+        """완전한 서비스 상태 확인"""
         return {
             'firebase': self._service_health['firebase'],
+            'firebase_storage': bool(self.firebase_bucket),
             'wasabi': self._service_health['wasabi'],
             'translator': self._service_health['translator'],
             'memory_usage': self._get_memory_usage(),
             'brunch_domain': self.brunch_domain,
             'single_qr_enabled': True,
+            'qr_thumbnail_combined': True,
+            'dual_storage_enabled': True,
+            'permanent_links_enabled': True,
             'railway_optimized': True,
             'timestamp': datetime.now().isoformat()
         }

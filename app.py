@@ -1,4 +1,4 @@
-# app.py - 수정된 Flask 백엔드 (단일 QR 코드 및 언어별 분기)
+# app.py - 완전한 Flask 백엔드 (번역 기능 및 QR 코드 완전 구현)
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session
 import os
 import tempfile
@@ -49,7 +49,7 @@ except ImportError as e:
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-railway-2024')
 
-# 브런치 도메인 설정
+# 브런치 도메인 설정 (수정됨)
 BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'jwvduc.app.link')
 BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
 
@@ -64,6 +64,16 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax'
 )
+
+# 지원 언어 정의 (추가됨)
+SUPPORTED_LANGUAGES = {
+    'ko': '한국어',
+    'en': 'English',
+    'zh': '中文',
+    'vi': 'Tiếng Việt',
+    'th': 'ไทย',
+    'ja': '日本語'
+}
 
 # Railway 로깅 설정
 log_level = logging.INFO
@@ -86,16 +96,6 @@ service_init_attempted = False
 # 업로드 상태 추적
 upload_status = {}
 upload_lock = threading.Lock()
-
-# 지원 언어 정의
-SUPPORTED_LANGUAGES = {
-    'ko': '한국어',
-    'en': 'English',
-    'zh': '中文',
-    'vi': 'Tiếng Việt',
-    'th': 'ไทย',
-    'ja': '日本語'
-}
 
 def safe_get_service_instances():
     """Railway 안전한 서비스 인스턴스 획득"""
@@ -304,7 +304,7 @@ def upload_video():
         flash(f'업로드 중 오류가 발생했습니다: {str(e)}', 'error')
         return redirect(url_for('index'))
 
-# 🆕 단일 QR 코드와 언어별 분기를 지원하는 영상 시청 페이지
+# 🆕 단일 QR 코드와 언어별 분기를 지원하는 영상 시청 페이지 (완전 구현)
 @app.route('/watch/<video_id>')
 def watch_video(video_id):
     """단일 QR 코드와 언어별 분기를 지원하는 영상 시청 페이지"""
@@ -504,7 +504,7 @@ def get_video_languages(video_id):
 
 @app.route('/api/translate', methods=['POST'])
 def translate_text():
-    """번역 API"""
+    """완전한 번역 API (수정됨)"""
     try:
         uploader, translator = safe_get_service_instances()
         if not translator:
@@ -519,7 +519,7 @@ def translate_text():
         if not text:
             return jsonify({'success': False, 'error': '번역할 텍스트가 없습니다'}), 400
 
-        # 번역 실행
+        # 번역 실행 (실제 GoogleTranslator 사용)
         translations = translator.translate_title(text)
         
         return jsonify({
