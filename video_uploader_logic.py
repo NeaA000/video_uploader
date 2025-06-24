@@ -1,4 +1,4 @@
-# video_uploader_logic.py - 완전한 QR 코드 + 썸네일 결합 및 이중 저장 구현
+# video_uploader_logic.py - 하이브리드 프록시 방식 (Wasabi 저장 + Railway 프록시)
 import os
 import sys
 import uuid
@@ -21,11 +21,12 @@ from contextlib import contextmanager
 # 필수 라이브러리 import with fallback
 try:
     import boto3
+    from botocore.exceptions import ClientError
     from boto3.s3.transfer import TransferConfig
     import firebase_admin
-    from firebase_admin import credentials, firestore  # storage 제거
+    from firebase_admin import credentials, firestore
     from moviepy.video.io.VideoFileClip import VideoFileClip
-    from googletrans import Translator  # Google Translate 대체 라이브러리
+    from googletrans import Translator
 except ImportError as e:
     print(f"❌ 필수 라이브러리 누락: {e}")
     print("다음 명령어로 설치하세요: pip install boto3 firebase-admin moviepy googletrans==4.0.0rc1")
@@ -75,7 +76,7 @@ CATEGORY_STRUCTURE = {
 }
 
 class GoogleTranslator:
-    """완전한 googletrans 번역 시스템 (수정됨)"""
+    """완전한 googletrans 번역 시스템"""
     
     def __init__(self):
         self.translator = Translator()
@@ -105,7 +106,7 @@ class GoogleTranslator:
         # 캐시 시스템 (Railway 메모리 절약)
         self._translation_cache = {}
         self._cache_lock = threading.Lock()
-        self._cache_max_size = 100  # 캐시 크기 증가
+        self._cache_max_size = 100
         
         logger.info("🌍 완전한 번역 서비스 초기화 완료")
     
@@ -183,8 +184,8 @@ class GoogleTranslator:
                     # 번역 결과 검증 강화
                     if (translated_text != clean_text and 
                         len(translated_text) > 0 and 
-                        not translated_text.isdigit() and  # 숫자만 있는 결과 제외
-                        translated_text.lower() != clean_text.lower()):  # 대소문자만 다른 경우 제외
+                        not translated_text.isdigit() and
+                        translated_text.lower() != clean_text.lower()):
                         
                         logger.debug(f"✅ googletrans 번역 성공: '{clean_text}' -> '{translated_text}' ({target_lang})")
                         return translated_text
@@ -197,7 +198,7 @@ class GoogleTranslator:
             except Exception as e:
                 logger.warning(f"❌ googletrans 번역 시도 {attempt + 1} 실패 ({target_lang}): {e}")
                 if attempt < self.max_retries - 1:
-                    wait_time = (attempt + 1) * 2  # 점진적 대기
+                    wait_time = (attempt + 1) * 2
                     logger.debug(f"⏱️ {wait_time}초 대기 후 재시도")
                     time.sleep(wait_time)
         
@@ -216,7 +217,7 @@ class GoogleTranslator:
         safe_text = safe_text.strip('_')
         
         # Railway 제한 적용
-        if len(safe_text.encode('utf-8')) > 200:  # 바이트 길이 제한
+        if len(safe_text.encode('utf-8')) > 200:
             safe_text = safe_text[:50].rstrip('_')
         
         return safe_text or 'Unknown_Title'
@@ -277,7 +278,7 @@ class GoogleTranslator:
         return self._make_filename_safe(result)
 
 class VideoUploaderLogic:
-    """비디오 업로더 메인 클래스 - QR+썸네일 결합 및 이중 저장"""
+    """하이브리드 비디오 업로더 - Wasabi 저장 + Railway 프록시"""
     
     def __init__(self):
         self._initialization_lock = threading.Lock()
@@ -291,7 +292,7 @@ class VideoUploaderLogic:
             self._initialize_services()
             self.translator = GoogleTranslator()
             self._service_health['translator'] = True
-            logger.info("✅ Railway 비디오 업로더 완전 초기화 완료 (QR+썸네일 결합)")
+            logger.info("✅ Railway 하이브리드 업로더 완전 초기화 완료")
         except Exception as e:
             logger.error(f"❌ 비디오 업로더 초기화 실패: {e}")
             logger.error(f"초기화 실패 상세: {traceback.format_exc()}")
@@ -301,56 +302,9 @@ class VideoUploaderLogic:
         """Railway 최적화된 서비스 초기화"""
         with self._initialization_lock:
             try:
-                # Firebase 초기화 (Storage 포함)
+                # Firebase Firestore 초기화 (메타데이터만)
                 self._initialize_firebase()
                 self.db = firestore.client()
-                
-                # Firebase Storage 초기화 (자동 활성화 체크)
-                try:
-                    storage_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET', f"{os.environ['FIREBASE_PROJECT_ID']}.appspot.com")
-                    logger.info(f"🔧 Firebase Storage 연결 시도: {storage_bucket}")
-                    
-                    self.firebase_bucket = storage.bucket(storage_bucket)
-                    
-                    # 버킷 존재 및 활성화 확인
-                    try:
-                        # 간단한 메타데이터 조회로 활성화 상태 확인
-                        bucket_attrs = self.firebase_bucket._bucket
-                        logger.info("✅ Firebase Storage 초기화 및 버킷 연결 완료")
-                        logger.info(f"📦 버킷: {storage_bucket}")
-                        
-                    except Exception as bucket_error:
-                        error_msg = str(bucket_error).lower()
-                        
-                        if '404' in error_msg or 'does not exist' in error_msg:
-                            logger.error(f"❌ Firebase Storage 버킷이 존재하지 않음: {storage_bucket}")
-                            logger.error("💡 해결 방법:")
-                            logger.error("   1. Firebase 콘솔 (https://console.firebase.google.com) 접속")
-                            logger.error(f"   2. 프로젝트 '{os.environ.get('FIREBASE_PROJECT_ID')}' 선택")
-                            logger.error("   3. 왼쪽 메뉴에서 'Storage' 클릭")
-                            logger.error("   4. '시작하기' 버튼 클릭하여 Storage 활성화")
-                            logger.error("   5. 위치: asia-northeast1 추천")
-                            logger.error("   6. 보안 규칙: 테스트 모드 선택")
-                            
-                        elif 'permission' in error_msg or 'forbidden' in error_msg:
-                            logger.error("❌ Firebase Storage 권한 오류")
-                            logger.error("💡 Firebase 콘솔에서 Storage 보안 규칙을 테스트 모드로 변경하세요")
-                            
-                        elif 'not enabled' in error_msg or 'disabled' in error_msg:
-                            logger.error("❌ Firebase Storage가 활성화되지 않음")
-                            logger.error("💡 Firebase 콘솔에서 Storage를 활성화해주세요")
-                            
-                        else:
-                            logger.warning(f"⚠️ Firebase Storage 연결 문제: {bucket_error}")
-                            logger.info("💡 일시적 문제일 수 있습니다. Wasabi 단독으로 계속 진행합니다.")
-                        
-                        self.firebase_bucket = None
-                        
-                except Exception as e:
-                    logger.error(f"❌ Firebase Storage 초기화 실패: {e}")
-                    logger.info("💡 Wasabi 단일 저장으로 계속 진행합니다")
-                    self.firebase_bucket = None
-                
                 self._service_health['firebase'] = True
                 
                 # Wasabi S3 초기화
@@ -358,13 +312,18 @@ class VideoUploaderLogic:
                 self.bucket_name = os.environ['WASABI_BUCKET_NAME']
                 self._service_health['wasabi'] = True
                 
-                # 브런치 도메인 설정
+                # 브런치 도메인 설정 (Railway 프록시용)
                 self.brunch_domain = BRUNCH_DOMAIN
                 self.brunch_alternate_domain = BRUNCH_ALTERNATE_DOMAIN
                 
-                # Railway 설정
-                self.app_base_url = f'https://{self.brunch_domain}/watch/'
-                self.wasabi_cdn_url = os.environ.get('WASABI_CDN_URL', '')
+                # Railway 프록시 URL 구조
+                self.app_base_url = f'https://{self.brunch_domain}'
+                self.proxy_endpoints = {
+                    'qr': f'{self.app_base_url}/qr/',
+                    'thumbnail': f'{self.app_base_url}/thumbnail/',
+                    'video': f'{self.app_base_url}/video/',
+                    'watch': f'{self.app_base_url}/watch/'
+                }
                 
                 # Railway 최적화된 전송 설정
                 self.transfer_config = TransferConfig(
@@ -374,7 +333,7 @@ class VideoUploaderLogic:
                     use_threads=True
                 )
                 
-                logger.info(f"🔧 완전한 서비스 초기화 완료 (도메인: {self.brunch_domain})")
+                logger.info(f"🔧 하이브리드 서비스 초기화 완료 (프록시 도메인: {self.brunch_domain})")
                 
             except Exception as e:
                 logger.error(f"❌ 서비스 초기화 실패: {e}")
@@ -382,13 +341,12 @@ class VideoUploaderLogic:
                 raise
     
     def _initialize_firebase(self):
-        """Firebase Firestore만 초기화 (Storage 제외)"""
+        """Firebase Firestore 초기화 (메타데이터 전용)"""
         if firebase_admin._apps:
             logger.debug("Firebase 이미 초기화됨")
             return
         
         try:
-            # Railway 환경변수에서 Firebase 설정 로드
             firebase_config = {
                 "type": "service_account",
                 "project_id": os.environ["FIREBASE_PROJECT_ID"],
@@ -403,8 +361,6 @@ class VideoUploaderLogic:
             }
             
             cred = credentials.Certificate(firebase_config)
-            
-            # Firestore만 초기화 (Storage 제외)
             firebase_admin.initialize_app(cred)
             logger.info("✅ Firebase Firestore 초기화 완료 (메타데이터 전용)")
             
@@ -424,7 +380,7 @@ class VideoUploaderLogic:
                 endpoint_url=f"https://s3.{os.environ.get('WASABI_REGION', 'us-east-1')}.wasabisys.com",
                 config=boto3.session.Config(
                     retries={'max_attempts': 3, 'mode': 'adaptive'},
-                    max_pool_connections=3,  # Railway 최적화
+                    max_pool_connections=3,
                     region_name=os.environ.get('WASABI_REGION', 'us-east-1')
                 )
             )
@@ -442,7 +398,6 @@ class VideoUploaderLogic:
         try:
             yield
         finally:
-            # 메모리 정리
             gc.collect()
             final_memory = self._get_memory_usage()
             logger.debug(f"메모리 사용량: {initial_memory:.1f}MB → {final_memory:.1f}MB")
@@ -457,7 +412,7 @@ class VideoUploaderLogic:
             return 0.0
     
     def validate_file(self, file_path: str, file_type: str = 'video') -> bool:
-        """개선된 파일 검증 (확장자 없는 경우 처리)"""
+        """개선된 파일 검증"""
         try:
             path = Path(file_path)
             
@@ -472,12 +427,10 @@ class VideoUploaderLogic:
             if not ext:
                 logger.warning(f"파일 확장자 없음: {file_path}")
                 
-                # 파일 시그니처로 형식 추측 시도
                 try:
                     with open(file_path, 'rb') as f:
                         file_header = f.read(16)
                     
-                    # 일반적인 파일 시그니처 확인
                     if file_header.startswith(b'\x89PNG'):
                         ext = '.png'
                     elif file_header.startswith(b'\xff\xd8\xff'):
@@ -485,7 +438,7 @@ class VideoUploaderLogic:
                     elif file_header.startswith(b'GIF'):
                         ext = '.gif'
                     elif file_header.startswith(b'\x00\x00\x00'):
-                        ext = '.mp4'  # MP4 일 가능성
+                        ext = '.mp4'
                     else:
                         logger.warning(f"파일 형식을 확인할 수 없음: {file_path}")
                         return False
@@ -514,7 +467,6 @@ class VideoUploaderLogic:
                 logger.warning(f"파일 크기 초과: {file_size} > {MAX_FILE_SIZE}")
                 return False
             
-            # Railway 메모리 제한 확인
             if file_size > RAILWAY_MEMORY_LIMIT // 2:
                 logger.warning(f"Railway 메모리 제한으로 인한 파일 크기 초과: {file_size}")
                 return False
@@ -532,7 +484,6 @@ class VideoUploaderLogic:
             try:
                 logger.debug(f"비디오 메타데이터 추출 시작: {video_path}")
                 
-                # Railway 안전 모드로 메타데이터 추출
                 with VideoFileClip(video_path) as clip:
                     duration_sec = int(clip.duration) if clip.duration else 0
                     width = getattr(clip, 'w', 0)
@@ -574,10 +525,10 @@ class VideoUploaderLogic:
     
     def create_qr_with_thumbnail(self, video_id: str, title: str = "", thumbnail_path: str = None,
                                 output_path: str = None) -> bool:
-        """QR 코드 + 썸네일 결합 생성 (한글 폰트 지원)"""
+        """QR 코드 + 썸네일 결합 생성 (Railway 프록시 URL 사용)"""
         with self._railway_memory_context():
             try:
-                # 단일 QR 링크 생성
+                # Railway 프록시 URL 사용 (영구 URL)
                 qr_link = f"https://{self.brunch_domain}/watch/{video_id}"
                 
                 logger.debug(f"QR+썸네일 결합 생성 시작: {qr_link}")
@@ -585,27 +536,25 @@ class VideoUploaderLogic:
                 if not output_path:
                     output_path = f"qr_thumbnail_{video_id}.png"
                 
-                # QR 코드 생성 (높은 오류 정정 수준)
+                # QR 코드 생성
                 qr = qrcode.QRCode(
-                    version=3,  # 더 큰 버전으로 중앙 공간 확보
-                    error_correction=qrcode.constants.ERROR_CORRECT_H,  # 최고 오류 정정
+                    version=3,
+                    error_correction=qrcode.constants.ERROR_CORRECT_H,
                     box_size=6,
                     border=4,
                 )
                 qr.add_data(qr_link)
                 qr.make(fit=True)
                 
-                # QR 코드 이미지 생성
                 qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-                qr_size = 400  # 더 큰 QR 코드
+                qr_size = 400
                 qr_img = qr_img.resize((qr_size, qr_size), Image.LANCZOS)
                 
                 # 썸네일이 있는 경우 중앙에 삽입
                 if thumbnail_path and os.path.exists(thumbnail_path):
                     try:
                         with Image.open(thumbnail_path) as thumbnail:
-                            # 썸네일을 원형으로 만들기
-                            thumb_size = qr_size // 4  # QR 코드의 1/4 크기
+                            thumb_size = qr_size // 4
                             thumbnail = thumbnail.resize((thumb_size, thumb_size), Image.LANCZOS)
                             
                             # 원형 마스크 생성
@@ -613,16 +562,13 @@ class VideoUploaderLogic:
                             draw = ImageDraw.Draw(mask)
                             draw.ellipse((0, 0, thumb_size, thumb_size), fill=255)
                             
-                            # 썸네일을 원형으로 자르기
                             if thumbnail.mode != 'RGBA':
                                 thumbnail = thumbnail.convert('RGBA')
                             thumbnail.putalpha(mask)
                             
-                            # 흰색 배경의 원형 썸네일 생성 (QR 코드 가독성 향상)
                             circle_bg = Image.new('RGB', (thumb_size + 20, thumb_size + 20), 'white')
                             circle_bg.paste(thumbnail, (10, 10), thumbnail)
                             
-                            # QR 코드 중앙에 썸네일 삽입
                             thumb_pos = ((qr_size - thumb_size - 20) // 2, (qr_size - thumb_size - 20) // 2)
                             qr_img.paste(circle_bg, thumb_pos)
                             
@@ -634,7 +580,6 @@ class VideoUploaderLogic:
                 # 제목 추가 (한글 지원 개선)
                 if title:
                     try:
-                        # 한글 텍스트 안전 처리
                         safe_title = title.encode('utf-8', errors='ignore').decode('utf-8')
                         
                         text_height = 60
@@ -648,13 +593,12 @@ class VideoUploaderLogic:
                         # 한글 지원 폰트 시도
                         font = None
                         try:
-                            # 시스템 한글 폰트 시도
                             font_paths = [
-                                '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',  # Ubuntu
-                                '/usr/share/fonts/TTF/NanumGothic.ttf',  # CentOS
-                                '/System/Library/Fonts/AppleGothic.ttf',  # macOS
-                                'C:/Windows/Fonts/malgun.ttf',  # Windows
-                                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # 대체 폰트
+                                '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',
+                                '/usr/share/fonts/TTF/NanumGothic.ttf',
+                                '/System/Library/Fonts/AppleGothic.ttf',
+                                'C:/Windows/Fonts/malgun.ttf',
+                                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
                             ]
                             
                             for font_path in font_paths:
@@ -664,20 +608,16 @@ class VideoUploaderLogic:
                         except Exception as font_error:
                             logger.debug(f"폰트 로드 실패: {font_error}")
                         
-                        # 폰트를 찾지 못한 경우 기본 폰트 사용
                         if font is None:
                             font = ImageFont.load_default()
                         
-                        # 제목 텍스트 처리 (길이 제한)
-                        if len(safe_title.encode('utf-8')) > 60:  # 바이트 길이 기준
+                        if len(safe_title.encode('utf-8')) > 60:
                             safe_title = safe_title[:25] + "..."
                         
-                        # 텍스트 크기 측정 (한글 안전 처리)
                         try:
                             bbox = draw.textbbox((0, 0), safe_title, font=font)
                             text_width = bbox[2] - bbox[0]
                         except UnicodeEncodeError:
-                            # 폰트가 한글을 지원하지 않는 경우 영어로 대체
                             safe_title = f"Video_{video_id[:8]}"
                             bbox = draw.textbbox((0, 0), safe_title, font=font)
                             text_width = bbox[2] - bbox[0]
@@ -685,15 +625,12 @@ class VideoUploaderLogic:
                         text_x = max(0, (qr_size - text_width) // 2)
                         text_y = qr_size + margin
                         
-                        # 텍스트 배경 (가독성 향상)
                         text_bg_rect = [text_x - 10, text_y - 5, text_x + text_width + 10, text_y + 25]
                         draw.rectangle(text_bg_rect, fill='lightgray', outline='gray')
                         
-                        # 텍스트 그리기 (한글 안전 처리)
                         try:
                             draw.text((text_x, text_y), safe_title, font=font, fill='black')
                         except UnicodeEncodeError:
-                            # 한글 그리기 실패 시 영어로 대체
                             fallback_title = f"Video_{video_id[:8]}"
                             draw.text((text_x, text_y), fallback_title, font=font, fill='black')
                             logger.warning("⚠️ 한글 텍스트 렌더링 실패, 영어로 대체")
@@ -726,27 +663,22 @@ class VideoUploaderLogic:
                     logger.error(f"❌ 기본 QR 코드 생성도 실패: {fallback_error}")
                     return False
     
-    def create_single_qr_code(self, video_id: str, title: str = "", output_path: str = None) -> bool:
-        """기본 단일 QR 코드 생성 (썸네일 없는 경우)"""
-        return self.create_qr_with_thumbnail(video_id, title, None, output_path)
-    
     def upload_to_wasabi(self, local_path: str, s3_key: str, content_type: str = None,
                         progress_callback: Callable = None) -> Optional[str]:
-        """완전한 Wasabi 업로드 구현 (CDN 및 캐시 제어 포함)"""
+        """Wasabi 업로드 (Railway 프록시 URL 반환)"""
         try:
             logger.info(f"Wasabi 업로드 시작: {s3_key}")
             
-            # CDN 및 캐시 최적화 헤더
+            # Private 업로드 설정 (공개 불필요, Railway가 프록시)
             extra_args = {
-                'ACL': 'public-read',
-                'CacheControl': 'public, max-age=31536000',  # 1년 캐시 (링크 영구화)
+                'CacheControl': 'public, max-age=31536000',
                 'Expires': (datetime.now() + timedelta(days=365)).strftime('%a, %d %b %Y %H:%M:%S GMT')
             }
             
             if content_type:
                 extra_args['ContentType'] = content_type
             
-            # Railway 최적화된 진행률 콜백
+            # 진행률 콜백
             uploaded_bytes = 0
             total_bytes = os.path.getsize(local_path)
             
@@ -758,7 +690,7 @@ class VideoUploaderLogic:
                     percentage = min((uploaded_bytes / total_bytes) * 100, 100)
                     progress_callback(int(percentage), f"업로드 진행 중... {percentage:.1f}% ({uploaded_bytes / 1024 / 1024:.1f}MB / {total_bytes / 1024 / 1024:.1f}MB)")
             
-            # Railway 최적화된 업로드 실행
+            # Wasabi 업로드 실행
             self.s3_client.upload_file(
                 local_path,
                 self.bucket_name,
@@ -768,32 +700,67 @@ class VideoUploaderLogic:
                 Callback=railway_progress_callback if progress_callback else None
             )
             
-            # 영구 링크 생성 (CDN 우선)
-            if self.wasabi_cdn_url:
-                public_url = f"{self.wasabi_cdn_url.rstrip('/')}/{s3_key}"
+            # Railway 프록시 URL 반환 (영구 URL)
+            # 파일 타입에 따라 적절한 프록시 엔드포인트 결정
+            if 'qr' in s3_key.lower():
+                proxy_url = f"{self.proxy_endpoints['qr']}{s3_key}"
+            elif 'thumbnail' in s3_key.lower():
+                proxy_url = f"{self.proxy_endpoints['thumbnail']}{s3_key}"
+            elif any(video_ext in s3_key.lower() for video_ext in ['.mp4', '.avi', '.mov', '.wmv']):
+                proxy_url = f"{self.proxy_endpoints['video']}{s3_key}"
             else:
-                region = os.environ.get('WASABI_REGION', 'us-east-1')
-                public_url = f"https://s3.{region}.wasabisys.com/{self.bucket_name}/{s3_key}"
+                # 기본 파일 프록시 (필요시 추가)
+                proxy_url = f"{self.app_base_url}/file/{s3_key}"
             
-            logger.info(f"✅ Wasabi 업로드 완료 (영구링크): {s3_key} -> {public_url}")
-            return public_url
+            logger.info(f"✅ Wasabi 업로드 완료 (Railway 프록시 URL): {s3_key} -> {proxy_url}")
+            return proxy_url
             
         except Exception as e:
             logger.error(f"❌ Wasabi 업로드 실패: {s3_key} - {e}")
             logger.error(f"Wasabi 업로드 실패 상세: {traceback.format_exc()}")
             return None
     
-    def upload_to_firebase_storage(self, local_path: str, firebase_path: str, 
-                                 content_type: str = None) -> Optional[str]:
-        """Firebase Storage는 사용하지 않음 - 항상 None 반환"""
-        logger.debug("Firebase Storage는 사용하지 않음 (메타데이터는 Firestore에만 저장)")
-        return None
+    def get_file_from_wasabi(self, s3_key: str) -> Optional[bytes]:
+        """Wasabi에서 파일 다운로드 (Railway 프록시용)"""
+        try:
+            logger.debug(f"Wasabi에서 파일 다운로드: {s3_key}")
+            
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            file_data = response['Body'].read()
+            
+            logger.debug(f"✅ 파일 다운로드 완료: {s3_key} ({len(file_data)} bytes)")
+            return file_data
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchKey':
+                logger.warning(f"⚠️ 파일을 찾을 수 없음: {s3_key}")
+            else:
+                logger.error(f"❌ Wasabi 파일 다운로드 실패: {s3_key} - {e}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Wasabi 파일 다운로드 오류: {s3_key} - {e}")
+            return None
+    
+    def get_file_metadata_from_wasabi(self, s3_key: str) -> Optional[Dict[str, Any]]:
+        """Wasabi에서 파일 메타데이터 조회"""
+        try:
+            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            return {
+                'content_type': response.get('ContentType', 'application/octet-stream'),
+                'content_length': response.get('ContentLength', 0),
+                'last_modified': response.get('LastModified'),
+                'etag': response.get('ETag', '').strip('"')
+            }
+        except Exception as e:
+            logger.error(f"❌ 파일 메타데이터 조회 실패: {s3_key} - {e}")
+            return None
     
     def upload_video(self, video_path: str, thumbnail_path: Optional[str], group_name: str,
                     main_category: str, sub_category: str, leaf_category: str,
                     content_description: str, translated_filenames: Dict[str, str],
                     progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """완전한 메인 비디오 업로드 구현 - QR+썸네일 결합 및 이중 저장"""
+        """하이브리드 메인 비디오 업로드 (Wasabi 저장 + Railway 프록시 URL)"""
         
         with self._railway_memory_context():
             try:
@@ -804,7 +771,6 @@ class VideoUploaderLogic:
                 
                 update_progress(5, "🔍 파일 검증 및 메타데이터 추출 중...")
                 
-                # Railway 메모리 최적화된 메타데이터 추출
                 video_metadata = self.extract_video_metadata(video_path)
                 
                 update_progress(15, "📁 업로드 경로 설정 중...")
@@ -815,11 +781,10 @@ class VideoUploaderLogic:
                 date_str = timestamp.strftime('%Y%m%d')
                 safe_name = re.sub(r'[^\w가-힣-]', '_', group_name)[:30]
                 
-                # Railway 폴더 구조 최적화
                 year_month = timestamp.strftime('%Y%m')
                 base_folder = f"videos/{year_month}/{group_id}_{safe_name}"
                 
-                # 동영상 업로드 (Wasabi 단독)
+                # 동영상 업로드 (Wasabi 저장)
                 video_ext = Path(video_path).suffix.lower()
                 ko_filename = translated_filenames.get('ko', safe_name)
                 video_s3_key = f"{base_folder}/{ko_filename}_video_ko{video_ext}"
@@ -835,7 +800,7 @@ class VideoUploaderLogic:
                     adjusted_percentage = 25 + (percentage * 0.4)  # 25-65%
                     update_progress(int(adjusted_percentage), f"🎬 동영상: {msg}")
                 
-                # Wasabi에만 업로드
+                # Wasabi 업로드 (Railway 프록시 URL 반환)
                 video_url = self.upload_to_wasabi(
                     video_path,
                     video_s3_key,
@@ -846,11 +811,11 @@ class VideoUploaderLogic:
                 if not video_url:
                     raise Exception("동영상 업로드 실패")
                 
-                logger.info(f"✅ 동영상 Wasabi 업로드 완료: {video_url}")
+                logger.info(f"✅ 동영상 Wasabi 업로드 완료 (Railway 프록시): {video_url}")
                 
                 update_progress(70, "🖼️ 썸네일 처리 중...")
                 
-                # 썸네일 업로드 (Wasabi 단독)
+                # 썸네일 업로드 (Wasabi 저장)
                 thumbnail_url = None
                 thumbnail_s3_key = None
                 
@@ -865,9 +830,9 @@ class VideoUploaderLogic:
                     }
                     thumb_content_type = thumb_content_type_map.get(thumb_ext, 'image/jpeg')
                     
-                    # Wasabi에만 썸네일 업로드
+                    # Wasabi 업로드 (Railway 프록시 URL 반환)
                     thumbnail_url = self.upload_to_wasabi(thumbnail_path, thumbnail_s3_key, thumb_content_type)
-                    logger.info(f"✅ 썸네일 Wasabi 업로드 완료: {thumbnail_url}")
+                    logger.info(f"✅ 썸네일 Wasabi 업로드 완료 (Railway 프록시): {thumbnail_url}")
                 
                 update_progress(80, "📱 QR+썸네일 결합 코드 생성 중...")
                 
@@ -886,9 +851,9 @@ class VideoUploaderLogic:
                 if self.create_qr_with_thumbnail(group_id, qr_title, thumbnail_path, qr_temp_path):
                     qr_s3_key = f"{base_folder}/{ko_filename}_qr_combined.png"
                     
-                    # Wasabi에만 QR 업로드
+                    # Wasabi 업로드 (Railway 프록시 URL 반환)
                     qr_url = self.upload_to_wasabi(qr_temp_path, qr_s3_key, 'image/png')
-                    logger.info(f"✅ QR코드 Wasabi 업로드 완료: {qr_url}")
+                    logger.info(f"✅ QR코드 Wasabi 업로드 완료 (Railway 프록시): {qr_url}")
                     
                     # 임시 파일 정리
                     try:
@@ -898,7 +863,7 @@ class VideoUploaderLogic:
                 
                 update_progress(90, "💾 Firestore 메타데이터 저장 중...")
                 
-                # Firestore에는 메타데이터만 저장
+                # Firestore에 메타데이터 저장 (Wasabi S3 키 포함)
                 main_doc_data = {
                     'group_id': group_id,
                     'group_name': group_name,
@@ -907,7 +872,7 @@ class VideoUploaderLogic:
                     'sub_category': sub_category,
                     'sub_sub_category': leaf_category,
                     'base_folder': base_folder,
-                    'storage_provider': 'wasabi',  # Wasabi 단독 저장
+                    'storage_provider': 'wasabi_hybrid',  # 하이브리드 방식 표시
                     'bucket_name': self.bucket_name,
                     'upload_date': date_str,
                     'created_at': firestore.SERVER_TIMESTAMP,
@@ -917,24 +882,24 @@ class VideoUploaderLogic:
                     'total_file_size': video_metadata['file_size'],
                     'supported_video_languages': ['ko'],
                     'brunch_domain': self.brunch_domain,
-                    'qr_combined_enabled': True,  # QR+썸네일 결합 표시
-                    'wasabi_storage_only': True,  # Wasabi 단독 저장 표시
-                    'permanent_links': True,  # 영구 링크 보장
+                    'qr_combined_enabled': True,
+                    'railway_proxy_enabled': True,  # Railway 프록시 사용 표시
+                    'permanent_links': True,
                     'railway_optimized': True
                 }
                 
-                # Wasabi URL들 추가
+                # Railway 프록시 URL과 Wasabi S3 키 모두 저장
                 if qr_url and qr_s3_key:
                     main_doc_data.update({
                         'qr_link': qr_link,
                         'qr_s3_key': qr_s3_key,
-                        'qr_url': qr_url
+                        'qr_url': qr_url  # Railway 프록시 URL
                     })
                 
                 if thumbnail_url and thumbnail_s3_key:
                     main_doc_data.update({
                         'thumbnail_s3_key': thumbnail_s3_key,
-                        'thumbnail_url': thumbnail_url
+                        'thumbnail_url': thumbnail_url  # Railway 프록시 URL
                     })
                 
                 # 배치 작업으로 최적화
@@ -944,12 +909,12 @@ class VideoUploaderLogic:
                 main_doc_ref = self.db.collection('uploads').document(group_id)
                 batch.set(main_doc_ref, main_doc_data)
                 
-                # 언어별 영상 문서 (한국어 기본) - Wasabi URL만 저장
+                # 언어별 영상 문서 (한국어 기본) - Railway 프록시 URL과 S3 키 저장
                 language_doc_data = {
                     'language_code': 'ko',
                     'language_name': '한국어',
                     'video_s3_key': video_s3_key,
-                    'video_url': video_url,
+                    'video_url': video_url,  # Railway 프록시 URL
                     'content_type': video_content_type,
                     'file_size': video_metadata['file_size'],
                     'duration_seconds': video_metadata['duration_seconds'],
@@ -960,7 +925,8 @@ class VideoUploaderLogic:
                     'upload_date': date_str,
                     'created_at': firestore.SERVER_TIMESTAMP,
                     'is_original': True,
-                    'storage_provider': 'wasabi'
+                    'storage_provider': 'wasabi_hybrid',
+                    'railway_proxy_url': video_url
                 }
                 
                 language_doc_ref = main_doc_ref.collection('language_videos').document('ko')
@@ -977,7 +943,6 @@ class VideoUploaderLogic:
                     translation_doc_ref = main_doc_ref.collection('metadata').document('translations')
                     batch.set(translation_doc_ref, translation_metadata)
                 
-                # 배치 커밋
                 batch.commit()
                 
                 update_progress(100, "✅ 업로드 완료!")
@@ -986,19 +951,20 @@ class VideoUploaderLogic:
                 result = {
                     'success': True,
                     'group_id': group_id,
-                    'video_url': video_url,
+                    'video_url': video_url,  # Railway 프록시 URL
                     'qr_link': qr_link,
-                    'qr_url': qr_url,
-                    'thumbnail_url': thumbnail_url,
+                    'qr_url': qr_url,  # Railway 프록시 URL
+                    'thumbnail_url': thumbnail_url,  # Railway 프록시 URL
                     'metadata': video_metadata,
                     'brunch_domain': self.brunch_domain,
                     'qr_combined': True,
-                    'storage_provider': 'wasabi',
+                    'storage_provider': 'wasabi_hybrid',
+                    'railway_proxy_enabled': True,
                     'permanent_links': True,
                     'railway_optimized': True
                 }
                 
-                logger.info(f"✅ 완전한 비디오 업로드 성공: {group_name} (ID: {group_id}) - Wasabi 저장 + Firestore 메타데이터")
+                logger.info(f"✅ 하이브리드 비디오 업로드 성공: {group_name} (ID: {group_id}) - Wasabi 저장 + Railway 프록시")
                 return result
                 
             except Exception as e:
@@ -1012,7 +978,7 @@ class VideoUploaderLogic:
     
     def upload_language_video(self, video_id: str, language_code: str, video_path: str,
                              progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """언어별 영상 업로드 구현 (Wasabi 단독 저장)"""
+        """언어별 영상 업로드 (하이브리드 방식)"""
         
         with self._railway_memory_context():
             try:
@@ -1067,7 +1033,7 @@ class VideoUploaderLogic:
                     adjusted_percentage = 40 + (percentage * 0.4)  # 40-80%
                     update_progress(int(adjusted_percentage), f"🌐 {language_code}: {msg}")
                 
-                # Wasabi에만 업로드
+                # Wasabi 업로드 (Railway 프록시 URL 반환)
                 video_url = self.upload_to_wasabi(
                     video_path,
                     video_s3_key,
@@ -1078,19 +1044,19 @@ class VideoUploaderLogic:
                 if not video_url:
                     raise Exception("언어별 영상 업로드 실패")
                 
-                logger.info(f"✅ 언어별 영상 Wasabi 업로드 완료: {video_url}")
+                logger.info(f"✅ 언어별 영상 Wasabi 업로드 완료 (Railway 프록시): {video_url}")
                 
                 update_progress(85, "💾 Firestore 메타데이터 저장 중...")
                 
                 # 배치 업데이트
                 batch = self.db.batch()
                 
-                # 언어별 영상 데이터 (Wasabi URL만 저장)
+                # 언어별 영상 데이터 (Railway 프록시 URL과 S3 키 저장)
                 language_doc_data = {
                     'language_code': language_code,
                     'language_name': self._get_language_name(language_code),
                     'video_s3_key': video_s3_key,
-                    'video_url': video_url,
+                    'video_url': video_url,  # Railway 프록시 URL
                     'content_type': video_content_type,
                     'file_size': video_metadata['file_size'],
                     'duration_seconds': video_metadata['duration_seconds'],
@@ -1101,7 +1067,8 @@ class VideoUploaderLogic:
                     'upload_date': datetime.now().strftime('%Y%m%d'),
                     'created_at': firestore.SERVER_TIMESTAMP,
                     'is_original': False,
-                    'storage_provider': 'wasabi',
+                    'storage_provider': 'wasabi_hybrid',
+                    'railway_proxy_url': video_url,
                     'railway_uploaded': True
                 }
                 
@@ -1126,15 +1093,16 @@ class VideoUploaderLogic:
                 
                 result = {
                     'success': True,
-                    'video_url': video_url,
+                    'video_url': video_url,  # Railway 프록시 URL
                     'language_code': language_code,
                     'language_name': self._get_language_name(language_code),
                     'metadata': video_metadata,
-                    'storage_provider': 'wasabi',
+                    'storage_provider': 'wasabi_hybrid',
+                    'railway_proxy_enabled': True,
                     'railway_optimized': True
                 }
                 
-                logger.info(f"✅ 언어별 영상 업로드 성공: {video_id} ({language_code}) - Wasabi 저장")
+                logger.info(f"✅ 언어별 영상 업로드 성공: {video_id} ({language_code}) - 하이브리드 방식")
                 return result
                 
             except Exception as e:
@@ -1147,11 +1115,10 @@ class VideoUploaderLogic:
                 }
     
     def get_existing_videos(self) -> List[Dict[str, Any]]:
-        """기존 영상 목록 조회 구현"""
+        """기존 영상 목록 조회 (Railway 프록시 URL 포함)"""
         try:
             logger.info("기존 영상 목록 조회 시작")
             
-            # Railway 메모리 제한으로 50개만 조회
             docs = self.db.collection('uploads').order_by(
                 'created_at', direction=firestore.Query.DESCENDING
             ).limit(50).get()
@@ -1167,19 +1134,18 @@ class VideoUploaderLogic:
                     language_videos = {}
                     
                     try:
-                        # 서브컬렉션 조회 최적화
                         lang_docs = doc.reference.collection('language_videos').get()
                         for lang_doc in lang_docs:
                             lang_data = lang_doc.to_dict()
                             language_videos[lang_doc.id] = {
                                 'language_code': lang_doc.id,
                                 'language_name': lang_data.get('language_name', ''),
-                                'video_url': lang_data.get('video_url', ''),
-                                'video_firebase_url': lang_data.get('video_firebase_url', ''),
+                                'video_url': lang_data.get('video_url', ''),  # Railway 프록시 URL
+                                'video_s3_key': lang_data.get('video_s3_key', ''),  # Wasabi S3 키
                                 'file_size': lang_data.get('file_size', 0),
                                 'duration': lang_data.get('duration_string', ''),
                                 'upload_date': lang_data.get('upload_date', ''),
-                                'dual_storage': lang_data.get('dual_storage', False)
+                                'railway_proxy_enabled': lang_data.get('railway_proxy_url') is not None
                             }
                             supported_languages.append(lang_doc.id)
                     except Exception as e:
@@ -1200,10 +1166,12 @@ class VideoUploaderLogic:
                         'language_videos': language_videos,
                         'total_file_size': data.get('total_file_size', 0),
                         'qr_link': data.get('qr_link', ''),
-                        'qr_url': data.get('qr_url', ''),
+                        'qr_url': data.get('qr_url', ''),  # Railway 프록시 URL
+                        'thumbnail_url': data.get('thumbnail_url', ''),  # Railway 프록시 URL
                         'brunch_domain': data.get('brunch_domain', self.brunch_domain),
                         'qr_combined': data.get('qr_combined_enabled', False),
-                        'storage_provider': data.get('storage_provider', 'wasabi'),
+                        'storage_provider': data.get('storage_provider', 'wasabi_hybrid'),
+                        'railway_proxy_enabled': data.get('railway_proxy_enabled', False),
                         'permanent_links': data.get('permanent_links', False),
                         'railway_optimized': data.get('railway_optimized', False)
                     }
@@ -1223,7 +1191,7 @@ class VideoUploaderLogic:
             return []
     
     def get_upload_status(self, group_id: str) -> Dict[str, Any]:
-        """업로드 상태 확인 구현"""
+        """업로드 상태 확인 (Railway 프록시 URL 포함)"""
         try:
             doc_ref = self.db.collection('uploads').document(group_id)
             doc = doc_ref.get()
@@ -1240,7 +1208,10 @@ class VideoUploaderLogic:
                 lang_docs = doc_ref.collection('language_videos').get()
                 for lang_doc in lang_docs:
                     lang_data = lang_doc.to_dict()
-                    language_videos[lang_doc.id] = lang_data
+                    language_videos[lang_doc.id] = {
+                        **lang_data,
+                        'railway_proxy_enabled': lang_data.get('railway_proxy_url') is not None
+                    }
                     supported_languages.append(lang_doc.id)
             except:
                 supported_languages = ['ko']  # 기본값
@@ -1256,11 +1227,12 @@ class VideoUploaderLogic:
                 'supported_languages': supported_languages,
                 'language_videos': language_videos,
                 'qr_link': data.get('qr_link', ''),
-                'qr_url': data.get('qr_url', ''),
-                'thumbnail_url': data.get('thumbnail_url', ''),
+                'qr_url': data.get('qr_url', ''),  # Railway 프록시 URL
+                'thumbnail_url': data.get('thumbnail_url', ''),  # Railway 프록시 URL
                 'brunch_domain': data.get('brunch_domain', self.brunch_domain),
                 'qr_combined': data.get('qr_combined_enabled', False),
-                'storage_provider': data.get('storage_provider', 'wasabi'),
+                'storage_provider': data.get('storage_provider', 'wasabi_hybrid'),
+                'railway_proxy_enabled': data.get('railway_proxy_enabled', False),
                 'permanent_links': data.get('permanent_links', False),
                 'railway_optimized': data.get('railway_optimized', False)
             }
@@ -1283,7 +1255,7 @@ class VideoUploaderLogic:
         return language_names.get(language_code, language_code)
     
     def get_service_health(self) -> Dict[str, Any]:
-        """완전한 서비스 상태 확인 (Wasabi + Firestore)"""
+        """하이브리드 서비스 상태 확인"""
         return {
             'firebase_firestore': self._service_health['firebase'],
             'firebase_storage': False,  # 사용하지 않음
@@ -1293,7 +1265,8 @@ class VideoUploaderLogic:
             'brunch_domain': self.brunch_domain,
             'single_qr_enabled': True,
             'qr_thumbnail_combined': True,
-            'storage_provider': 'wasabi_only',
+            'storage_provider': 'wasabi_hybrid',
+            'railway_proxy_enabled': True,
             'firestore_metadata_only': True,
             'permanent_links_enabled': True,
             'railway_optimized': True,

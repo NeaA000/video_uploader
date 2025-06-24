@@ -1,4 +1,4 @@
-# main.py - Railway 최적화된 Streamlit 다국어 강의 업로드 시스템 (개선 버전)
+# main.py - Railway 최적화된 Streamlit 하이브리드 강의 업로드 시스템
 import streamlit as st
 import os
 import tempfile
@@ -11,12 +11,12 @@ from video_uploader_logic import VideoUploaderLogic, GoogleTranslator, CATEGORY_
 
 # Railway 최적화 설정
 st.set_page_config(
-    page_title="🌍 다국어 강의 업로드 시스템",
+    page_title="🌍 하이브리드 강의 업로드 시스템",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'About': "Railway 배포용 다국어 강의 업로드 시스템 v3.1"
+        'About': "Railway 하이브리드 배포용 다국어 강의 업로드 시스템 v3.2"
     }
 )
 
@@ -28,6 +28,7 @@ st.markdown("""
     .error-box { background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%); padding: 1rem; border-radius: 8px; border-left: 4px solid #dc3545; margin: 0.8rem 0; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
     .info-box { background: linear-gradient(135deg, #e8f5e8 0%, #f0f8ff 100%); padding: 1rem; border-radius: 8px; border-left: 4px solid #2a9d8f; margin: 0.8rem 0; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
     .warning-box { background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); padding: 1rem; border-radius: 8px; border-left: 4px solid #ffc107; margin: 0.8rem 0; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
+    .hybrid-box { background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 1rem; border-radius: 8px; border-left: 4px solid #2196f3; margin: 0.8rem 0; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
     .lang-badge { display: inline-block; background: rgba(255, 255, 255, 0.2); color: white; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.75rem; margin: 0.1rem; backdrop-filter: blur(10px); }
     .video-card { background: white; border-radius: 8px; padding: 0.8rem; margin: 0.4rem 0; border: 1px solid #e0e0e0; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); transition: transform 0.2s ease; }
     .video-card:hover { transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15); }
@@ -58,7 +59,7 @@ def check_environment():
 
 # 세션 상태 초기화 (Railway 메모리 최적화)
 def initialize_session_state():
-    """세션 상태 초기화 (메모리 최적화)"""
+    """세션 상태 초기화 (하이브리드 메모리 최적화)"""
     defaults = {
         'current_tab': 'new_upload',
         'translated_filenames': {},
@@ -74,23 +75,23 @@ def initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = default_value
     
-    # 서비스 인스턴스 초기화 (지연 로딩)
+    # 하이브리드 서비스 인스턴스 초기화 (지연 로딩)
     if st.session_state.uploader_instance is None:
         try:
-            with st.spinner("🔧 서비스 초기화 중..."):
+            with st.spinner("🔧 하이브리드 서비스 초기화 중..."):
                 st.session_state.uploader_instance = VideoUploaderLogic()
                 st.session_state.translator_instance = GoogleTranslator()
         except Exception as e:
-            st.error(f"❌ 서비스 초기화 실패: {e}")
+            st.error(f"❌ 하이브리드 서비스 초기화 실패: {e}")
             st.stop()
 
-# Railway 최적화된 헤더 (압축 버전)
+# Railway 최적화된 헤더 (하이브리드 버전)
 def render_header():
-    """Railway 최적화된 헤더 렌더링"""
+    """Railway 하이브리드 헤더 렌더링"""
     st.markdown("""
     <div class="main-header">
-        <h1>🌍 다국어 강의 업로드 시스템 v3.1</h1>
-        <p>Railway 배포 | AI 자동 번역으로 전 세계 사용자에게 강의를 제공하세요</p>
+        <h1>🌍 하이브리드 강의 업로드 시스템 v3.2</h1>
+        <p>Railway 하이브리드 배포 | Wasabi 저장 + Railway 프록시 = 영구 URL</p>
         <div>
             <span class="lang-badge">🇰🇷 한국어</span>
             <span class="lang-badge">🇺🇸 English</span>
@@ -102,9 +103,9 @@ def render_header():
     </div>
     """, unsafe_allow_html=True)
 
-# Railway 최적화된 사이드바 (압축 버전)
+# Railway 최적화된 사이드바 (하이브리드 버전)
 def setup_sidebar(is_railway_env):
-    """Railway 최적화된 사이드바 설정"""
+    """Railway 하이브리드 사이드바 설정"""
     with st.sidebar:
         st.markdown("## 📋 사용 가이드")
         
@@ -118,6 +119,20 @@ def setup_sidebar(is_railway_env):
         st.markdown("**동영상**: MP4, AVI, MOV, WMV, FLV, WEBM, MKV")
         st.markdown("**이미지**: JPG, PNG, GIF, BMP, WEBP")
         st.markdown("**최대 크기**: 5GB")
+        
+        st.markdown("---")
+        st.markdown("### 🔄 하이브리드 시스템")
+        
+        # 하이브리드 시스템 상태
+        st.markdown("""
+        <div class="hybrid-box">
+            <h4>📦 저장소 구조</h4>
+            <p><strong>Wasabi:</strong> 모든 파일 저장</p>
+            <p><strong>Railway:</strong> 프록시 서빙</p>
+            <p><strong>Firestore:</strong> 메타데이터</p>
+            <p><strong>결과:</strong> 영구 URL 보장 ✅</p>
+        </div>
+        """, unsafe_allow_html=True)
         
         st.markdown("---")
         st.markdown("### 📊 환경 상태")
@@ -139,9 +154,12 @@ def setup_sidebar(is_railway_env):
         
         # Railway 상태
         if is_railway_env:
-            st.success("🚀 Railway 배포 환경")
+            st.success("🚀 Railway 하이브리드 환경")
         else:
             st.info("💻 로컬 개발 환경")
+        
+        # 하이브리드 시스템 상태
+        st.info("🔄 프록시 모드 활성화")
 
 # 탭 메뉴 (Railway 최적화)
 def render_tab_menu():
@@ -170,9 +188,9 @@ def render_tab_menu():
             gc.collect()
             st.rerun()
 
-# 새 강의 업로드 탭 (Railway 최적화)
+# 새 강의 업로드 탭 (Railway 하이브리드 최적화)
 def render_new_upload_tab():
-    """Railway 최적화된 새 강의 업로드 탭"""
+    """Railway 하이브리드 새 강의 업로드 탭"""
     st.markdown("## 📋 기본 정보")
     
     group_name = st.text_input(
@@ -264,7 +282,7 @@ def render_new_upload_tab():
         max_chars=1000
     )
 
-    # 번역 결과 표시 (압축 버전)
+    # 번역 결과 표시 (하이브리드 버전)
     if st.session_state.get('show_translations', False) and st.session_state.get('translated_filenames'):
         st.markdown("### 🌍 번역된 파일명")
         
@@ -295,7 +313,7 @@ def render_new_upload_tab():
             
             if st.button("✅ 번역 확인 완료", type="primary", disabled=st.session_state.upload_in_progress):
                 st.session_state.translation_confirmed = True
-                st.success("✅ 파일명 번역 완료! 이제 파일을 업로드할 수 있습니다.")
+                st.success("✅ 파일명 번역 완료! 이제 하이브리드 업로드를 진행할 수 있습니다.")
                 st.rerun()
 
     # 파일 업로드 섹션
@@ -306,7 +324,7 @@ def render_new_upload_tab():
         video_file = st.file_uploader(
             "동영상 파일 *",
             type=['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv'],
-            help="최대 5GB",
+            help="최대 5GB (Wasabi 저장 + Railway 프록시)",
             disabled=st.session_state.upload_in_progress
         )
 
@@ -314,9 +332,21 @@ def render_new_upload_tab():
         thumbnail_file = st.file_uploader(
             "썸네일 이미지 (선택)",
             type=['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'],
-            help="없으면 QR 코드 생성",
+            help="없으면 QR 코드만 생성 (Railway 프록시)",
             disabled=st.session_state.upload_in_progress
         )
+
+    # 하이브리드 시스템 안내
+    if video_file or thumbnail_file:
+        st.markdown("""
+        <div class="hybrid-box">
+            <h4>🔄 하이브리드 업로드 과정</h4>
+            <p><strong>1단계:</strong> Wasabi에 원본 파일 저장</p>
+            <p><strong>2단계:</strong> Railway 프록시 URL 생성</p>
+            <p><strong>3단계:</strong> Firestore에 메타데이터 저장</p>
+            <p><strong>결과:</strong> 영구 접근 가능한 Railway URL 제공 ✅</p>
+        </div>
+        """, unsafe_allow_html=True)
 
     # 업로드 실행
     st.markdown("---")
@@ -327,11 +357,11 @@ def render_new_upload_tab():
         not st.session_state.upload_in_progress
     )
 
-    if st.button("🌍 다국어 강의 업로드 시작", type="primary", disabled=not upload_ready):
+    if st.button("🔄 하이브리드 강의 업로드 시작", type="primary", disabled=not upload_ready):
         if upload_ready:
             st.session_state.upload_in_progress = True
-            perform_upload(video_file, thumbnail_file, group_name, main_category, 
-                         sub_category, leaf_category, content_description)
+            perform_hybrid_upload(video_file, thumbnail_file, group_name, main_category, 
+                                sub_category, leaf_category, content_description)
         else:
             st.error("모든 필수 항목을 입력하고 파일명 번역을 확인해주세요.")
 
@@ -348,15 +378,15 @@ def render_new_upload_tab():
         
         st.markdown(f"""
         <div class="warning-box">
-            <h4>⚠️ 업로드 준비 체크</h4>
+            <h4>⚠️ 하이브리드 업로드 준비 체크</h4>
             <p>필요한 항목: <strong>{', '.join(missing_items)}</strong></p>
         </div>
         """, unsafe_allow_html=True)
 
-# 언어별 영상 관리 탭 (Railway 최적화)
+# 언어별 영상 관리 탭 (Railway 하이브리드 최적화)
 def render_language_video_tab():
-    """Railway 최적화된 언어별 영상 관리 탭"""
-    st.markdown("## 🌐 언어별 영상 관리")
+    """Railway 하이브리드 언어별 영상 관리 탭"""
+    st.markdown("## 🌐 언어별 영상 관리 (하이브리드)")
     
     if st.button("🔄 목록 새로고침"):
         if 'videos_data' in st.session_state:
@@ -379,13 +409,13 @@ def render_language_video_tab():
         st.markdown("""
         <div class="info-box">
             <h4>📚 업로드된 강의가 없습니다</h4>
-            <p>먼저 '새 강의 업로드' 탭에서 강의를 업로드해주세요.</p>
+            <p>먼저 '새 강의 업로드' 탭에서 하이브리드 업로드를 진행해주세요.</p>
         </div>
         """, unsafe_allow_html=True)
         return
     
     # 영상 목록 표시 (페이징 적용)
-    st.markdown("### 📚 업로드된 강의 목록")
+    st.markdown("### 📚 업로드된 강의 목록 (하이브리드)")
     
     videos_per_page = 10
     total_videos = len(videos_data)
@@ -403,15 +433,21 @@ def render_language_video_tab():
         status_icon = "🟢" if language_count == 6 else "🟡" if language_count > 1 else "🔴"
         status_text = "완료" if language_count == 6 else "진행중" if language_count > 1 else "시작"
         
+        # 하이브리드 상태 표시
+        is_hybrid = video.get('railway_proxy_enabled', False)
+        hybrid_icon = "🔄" if is_hybrid else "📦"
+        storage_info = "하이브리드" if is_hybrid else "기본"
+        
         with st.container():
             st.markdown(f"""
             <div class="video-card">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div>
-                        <h4>{status_icon} {video['title']}</h4>
+                        <h4>{status_icon} {hybrid_icon} {video['title']}</h4>
                         <p><strong>카테고리:</strong> {video['category']}</p>
                         <p><strong>업로드일:</strong> {video['upload_date']}</p>
                         <p><strong>지원 언어:</strong> {', '.join(video['languages'])} ({language_count}/6)</p>
+                        <p><strong>저장 방식:</strong> {storage_info} 방식</p>
                     </div>
                     <div style="text-align: right;">
                         <span style="background: {'#28a745' if language_count == 6 else '#ffc107' if language_count > 1 else '#dc3545'}; 
@@ -436,8 +472,16 @@ def render_language_video_tab():
         st.markdown("---")
         st.markdown(f"### 🎯 선택된 강의: {video['title']}")
         
+        # 하이브리드 상태 표시
+        if video.get('railway_proxy_enabled', False):
+            st.markdown("""
+            <div class="hybrid-box">
+                <p><strong>🔄 하이브리드 모드:</strong> 이 강의는 Railway 프록시를 통해 서빙됩니다</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
         existing_languages = video['languages']
-        all_languages = [("en", "🇺🇸 English"), ("zh", "🇨🇳 中文"), ("vi", "🇻🇳 Tiếng Việt"), ("th", "🇹🇭 ไทย"), ("ja", "🇯🇵 日본語")]
+        all_languages = [("en", "🇺🇸 English"), ("zh", "🇨🇳 中文"), ("vi", "🇻🇳 Tiếng Việt"), ("th", "🇹🇭 ไทย"), ("ja", "🇯🇵 日本語")]
         available_languages = [(code, display) for code, display in all_languages if code not in existing_languages]
         
         if not available_languages:
@@ -456,16 +500,17 @@ def render_language_video_tab():
         with col_file:
             lang_video_file = st.file_uploader(
                 "번역된 영상",
-                type=['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv']
+                type=['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv'],
+                help="하이브리드 방식으로 업로드됩니다"
             )
         
         if selected_lang and lang_video_file:
-            if st.button("🌐 언어별 영상 업로드", type="primary"):
-                perform_language_upload(video['id'], selected_lang[0], lang_video_file)
+            if st.button("🔄 하이브리드 언어별 영상 업로드", type="primary"):
+                perform_hybrid_language_upload(video['id'], selected_lang[0], lang_video_file)
 
-# Railway 최적화된 업로드 함수들
-def perform_upload(video_file, thumbnail_file, group_name, main_category, sub_category, leaf_category, content_description):
-    """Railway 최적화된 메인 업로드 실행"""
+# Railway 하이브리드 업로드 함수들
+def perform_hybrid_upload(video_file, thumbnail_file, group_name, main_category, sub_category, leaf_category, content_description):
+    """Railway 하이브리드 메인 업로드 실행"""
     progress_container = st.container()
     
     with progress_container:
@@ -491,9 +536,9 @@ def perform_upload(video_file, thumbnail_file, group_name, main_category, sub_ca
                     with open(thumbnail_path, "wb") as f:
                         f.write(thumbnail_file.getvalue())
                 
-                update_progress(20, "🌍 업로드 시작...")
+                update_progress(20, "🔄 하이브리드 업로드 시작...")
                 
-                # 업로드 실행
+                # 하이브리드 업로드 실행
                 result = st.session_state.uploader_instance.upload_video(
                     video_path=video_path,
                     thumbnail_path=thumbnail_path,
@@ -514,18 +559,21 @@ def perform_upload(video_file, thumbnail_file, group_name, main_category, sub_ca
                     
                     st.markdown("""
                     <div class="success-box">
-                        <h3>🎉 업로드 완료!</h3>
+                        <h3>🎉 하이브리드 업로드 완료!</h3>
                         <p>다국어 강의가 성공적으로 업로드되었습니다!</p>
+                        <p><strong>저장 방식:</strong> Wasabi 저장 + Railway 프록시</p>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # 결과 정보
+                    # 결과 정보 (하이브리드 버전)
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown("### 📊 업로드 정보")
                         st.write(f"**그룹 ID**: `{result['group_id']}`")
                         st.write(f"**강의명**: {group_name}")
                         st.write(f"**카테고리**: {main_category} > {sub_category} > {leaf_category}")
+                        st.write(f"**저장소**: {result.get('storage_provider', 'wasabi_hybrid')}")
+                        st.write(f"**Railway 프록시**: {'✅ 활성화' if result.get('railway_proxy_enabled') else '❌ 비활성화'}")
                         if result['metadata']:
                             st.write(f"**길이**: {result['metadata']['duration_string']}")
                             st.write(f"**크기**: {result['metadata']['file_size']:,} bytes")
@@ -535,11 +583,25 @@ def perform_upload(video_file, thumbnail_file, group_name, main_category, sub_ca
                         st.write(f"**시청 링크**: {result['qr_link']}")
                         if result['qr_url']:
                             st.write(f"**QR 코드**: [다운로드]({result['qr_url']})")
+                        if result['video_url']:
+                            st.write(f"**영상 URL**: [Railway 프록시]({result['video_url']})")
                     
-                    # QR 코드 표시
+                    # QR 코드 표시 (하이브리드)
                     if result['qr_url']:
-                        st.markdown("### 📱 QR 코드")
+                        st.markdown("### 📱 하이브리드 QR 코드")
                         st.image(result['qr_url'], width=250)
+                        st.caption("Railway 프록시를 통한 영구 접근 보장")
+                    
+                    # 하이브리드 시스템 안내
+                    st.markdown("""
+                    <div class="hybrid-box">
+                        <h4>🔄 하이브리드 시스템 완료</h4>
+                        <p><strong>✅ Wasabi 저장:</strong> 모든 원본 파일 안전 보관</p>
+                        <p><strong>✅ Railway 프록시:</strong> 영구 URL 제공</p>
+                        <p><strong>✅ Firestore 메타데이터:</strong> 빠른 검색 및 관리</p>
+                        <p><strong>✅ 영구 링크:</strong> QR 코드 평생 사용 가능</p>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
                     # 세션 정리
                     for key in ['translated_filenames', 'show_translations', 'translation_confirmed']:
@@ -559,7 +621,7 @@ def perform_upload(video_file, thumbnail_file, group_name, main_category, sub_ca
                     status_text.empty()
                     st.markdown(f"""
                     <div class="error-box">
-                        <h3>❌ 업로드 실패</h3>
+                        <h3>❌ 하이브리드 업로드 실패</h3>
                         <p>오류: {result.get('error', '알 수 없는 오류')}</p>
                     </div>
                     """, unsafe_allow_html=True)
@@ -569,7 +631,7 @@ def perform_upload(video_file, thumbnail_file, group_name, main_category, sub_ca
             status_text.empty()
             st.markdown(f"""
             <div class="error-box">
-                <h3>❌ 업로드 중 오류</h3>
+                <h3>❌ 하이브리드 업로드 중 오류</h3>
                 <p>{str(e)}</p>
             </div>
             """, unsafe_allow_html=True)
@@ -578,8 +640,8 @@ def perform_upload(video_file, thumbnail_file, group_name, main_category, sub_ca
             st.session_state.upload_in_progress = False
             gc.collect()
 
-def perform_language_upload(video_id, language_code, lang_video_file):
-    """Railway 최적화된 언어별 영상 업로드"""
+def perform_hybrid_language_upload(video_id, language_code, lang_video_file):
+    """Railway 하이브리드 언어별 영상 업로드"""
     progress_container = st.container()
     
     with progress_container:
@@ -598,7 +660,7 @@ def perform_language_upload(video_id, language_code, lang_video_file):
                 with open(lang_video_path, "wb") as f:
                     f.write(lang_video_file.getvalue())
                 
-                update_progress(20, "🌐 언어별 영상 업로드 중...")
+                update_progress(20, "🔄 하이브리드 언어별 영상 업로드 중...")
                 
                 result = st.session_state.uploader_instance.upload_language_video(
                     video_id=video_id,
@@ -618,14 +680,18 @@ def perform_language_upload(video_id, language_code, lang_video_file):
                     
                     st.markdown(f"""
                     <div class="success-box">
-                        <h3>🎉 언어별 영상 업로드 완료!</h3>
+                        <h3>🎉 하이브리드 언어별 영상 업로드 완료!</h3>
                         <p>{lang_display} 영상이 성공적으로 업로드되었습니다!</p>
+                        <p><strong>저장 방식:</strong> Wasabi 저장 + Railway 프록시</p>
                     </div>
                     """, unsafe_allow_html=True)
                     
                     st.markdown("### 📊 업로드 정보")
                     st.write(f"**언어**: {lang_display}")
-                    st.write(f"**동영상 URL**: {result['video_url']}")
+                    st.write(f"**저장소**: {result.get('storage_provider', 'wasabi_hybrid')}")
+                    st.write(f"**Railway 프록시**: {'✅ 활성화' if result.get('railway_proxy_enabled') else '❌ 비활성화'}")
+                    if result.get('video_url'):
+                        st.write(f"**Railway 프록시 URL**: [접근]({result['video_url']})")
                     
                     if result['metadata']:
                         st.write(f"**길이**: {result['metadata']['duration_string']}")
@@ -644,7 +710,7 @@ def perform_language_upload(video_id, language_code, lang_video_file):
                     status_text.empty()
                     st.markdown(f"""
                     <div class="error-box">
-                        <h3>❌ 언어별 영상 업로드 실패</h3>
+                        <h3>❌ 하이브리드 언어별 영상 업로드 실패</h3>
                         <p>오류: {result.get('error', '알 수 없는 오류')}</p>
                     </div>
                     """, unsafe_allow_html=True)
@@ -654,14 +720,14 @@ def perform_language_upload(video_id, language_code, lang_video_file):
             status_text.empty()
             st.markdown(f"""
             <div class="error-box">
-                <h3>❌ 업로드 중 오류</h3>
+                <h3>❌ 하이브리드 업로드 중 오류</h3>
                 <p>{str(e)}</p>
             </div>
             """, unsafe_allow_html=True)
 
-# Railway 최적화된 메인 함수
+# Railway 하이브리드 메인 함수
 def main():
-    """Railway 최적화된 메인 함수"""
+    """Railway 하이브리드 메인 함수"""
     # 환경 체크
     is_railway_env = check_environment()
     
@@ -687,7 +753,8 @@ def main():
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; padding: 1rem;">
-        <p>🌍 다국어 강의 업로드 시스템 v3.1 | Railway 최적화 버전</p>
+        <p>🌍 하이브리드 강의 업로드 시스템 v3.2 | Railway 최적화 버전</p>
+        <p>🔄 Wasabi 저장 + Railway 프록시 = 영구 URL + 최적 성능</p>
         <p>🚀 AI 자동 번역으로 전 세계에 지식을 전파하세요</p>
     </div>
     """, unsafe_allow_html=True)
