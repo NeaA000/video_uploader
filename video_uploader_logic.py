@@ -23,7 +23,7 @@ try:
     import boto3
     from boto3.s3.transfer import TransferConfig
     import firebase_admin
-    from firebase_admin import credentials, firestore, storage
+    from firebase_admin import credentials, firestore  # storage 제거
     from moviepy.video.io.VideoFileClip import VideoFileClip
     from googletrans import Translator  # Google Translate 대체 라이브러리
 except ImportError as e:
@@ -169,22 +169,27 @@ class GoogleTranslator:
                 if not clean_text:
                     return None
                 
+                # 단순한 영문자/숫자만 있는 경우 번역하지 않음
+                if clean_text.isalnum() and clean_text.isascii():
+                    logger.debug(f"단순 영문자/숫자는 번역하지 않음: {clean_text}")
+                    return None
+                
                 # Google Translate API 호출
                 result = self.translator.translate(clean_text, src='ko', dest=target_lang)
                 
                 if result and result.text and result.text.strip():
                     translated_text = result.text.strip()
                     
-                    # 번역 결과 검증
-                    if translated_text != clean_text and len(translated_text) > 0:
-                        # 추가 검증: 의미 있는 번역인지 확인
-                        if len(translated_text) >= 2 and not translated_text.isdigit():
-                            logger.debug(f"✅ googletrans 번역 성공: '{clean_text}' -> '{translated_text}' ({target_lang})")
-                            return translated_text
-                        else:
-                            logger.warning(f"⚠️ googletrans 번역 결과가 의미 없음: {target_lang}")
+                    # 번역 결과 검증 강화
+                    if (translated_text != clean_text and 
+                        len(translated_text) > 0 and 
+                        not translated_text.isdigit() and  # 숫자만 있는 결과 제외
+                        translated_text.lower() != clean_text.lower()):  # 대소문자만 다른 경우 제외
+                        
+                        logger.debug(f"✅ googletrans 번역 성공: '{clean_text}' -> '{translated_text}' ({target_lang})")
+                        return translated_text
                     else:
-                        logger.warning(f"⚠️ googletrans 번역 결과가 원본과 동일: {target_lang}")
+                        logger.warning(f"⚠️ googletrans 번역 결과가 의미없음: '{translated_text}' ({target_lang})")
                         
                 else:
                     logger.warning(f"⚠️ googletrans 번역 결과가 비어있음: {target_lang}")
@@ -452,7 +457,7 @@ class VideoUploaderLogic:
             return 0.0
     
     def validate_file(self, file_path: str, file_type: str = 'video') -> bool:
-        """개선된 파일 검증"""
+        """개선된 파일 검증 (확장자 없는 경우 처리)"""
         try:
             path = Path(file_path)
             
@@ -462,6 +467,34 @@ class VideoUploaderLogic:
             
             ext = path.suffix.lower()
             logger.debug(f"파일 검증 시작: {file_path} (확장자: '{ext}', 타입: {file_type})")
+            
+            # 확장자가 없는 경우 파일 내용으로 추측
+            if not ext:
+                logger.warning(f"파일 확장자 없음: {file_path}")
+                
+                # 파일 시그니처로 형식 추측 시도
+                try:
+                    with open(file_path, 'rb') as f:
+                        file_header = f.read(16)
+                    
+                    # 일반적인 파일 시그니처 확인
+                    if file_header.startswith(b'\x89PNG'):
+                        ext = '.png'
+                    elif file_header.startswith(b'\xff\xd8\xff'):
+                        ext = '.jpg'
+                    elif file_header.startswith(b'GIF'):
+                        ext = '.gif'
+                    elif file_header.startswith(b'\x00\x00\x00'):
+                        ext = '.mp4'  # MP4 일 가능성
+                    else:
+                        logger.warning(f"파일 형식을 확인할 수 없음: {file_path}")
+                        return False
+                        
+                    logger.info(f"파일 시그니처로 형식 추측: {ext}")
+                    
+                except Exception as header_error:
+                    logger.warning(f"파일 헤더 읽기 실패: {header_error}")
+                    return False
             
             # 파일 형식 검증
             if file_type == 'video' and ext not in SUPPORTED_VIDEO_FORMATS:
@@ -486,7 +519,7 @@ class VideoUploaderLogic:
                 logger.warning(f"Railway 메모리 제한으로 인한 파일 크기 초과: {file_size}")
                 return False
             
-            logger.info(f"✅ 파일 검증 성공: {file_path} ({file_size / 1024 / 1024:.2f}MB)")
+            logger.info(f"✅ 파일 검증 성공: {file_path} ({file_size / 1024 / 1024:.2f}MB, 형식: {ext})")
             return True
             
         except Exception as e:
