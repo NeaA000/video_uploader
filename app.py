@@ -1,4 +1,4 @@
-# app.py - 하이브리드 프록시 Flask 백엔드 (Wasabi 저장 + Railway 프록시)
+# app.py - 개선된 하이브리드 프록시 Flask 백엔드 (Branch.io 통합)
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, Response, send_file
 import os
 import tempfile
@@ -8,11 +8,15 @@ import time
 import threading
 import sys
 import io
+import re
+import requests
 from pathlib import Path
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import RequestEntityTooLarge
 import logging
 from datetime import datetime, timedelta
+from functools import wraps
+import hashlib
 
 # Railway 환경에서 서비스 로딩을 안전하게 처리
 try:
@@ -50,9 +54,17 @@ except ImportError as e:
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-railway-2024')
 
-# 브런치 도메인 설정
-BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'jwvduc.app.link')
-BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
+# Branch.io 설정
+BRANCH_KEY = os.environ.get('BRANCH_KEY', '')
+BRANCH_SECRET = os.environ.get('BRANCH_SECRET', '')
+BRANCH_APP_ID = os.environ.get('BRANCH_APP_ID', '')
+CUSTOM_DOMAIN = os.environ.get('CUSTOM_DOMAIN', '')  # 실제 구매한 도메인
+BRANCH_DOMAIN = os.environ.get('BRANCH_DOMAIN', 'jwvduc.app.link')
+BRANCH_ALTERNATE_DOMAIN = os.environ.get('BRANCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
+
+# Railway 설정
+RAILWAY_STATIC_URL = os.environ.get('RAILWAY_STATIC_URL', '')
+IS_PRODUCTION = os.environ.get('RAILWAY_ENVIRONMENT', 'development') == 'production'
 
 # Railway 최적화 설정
 app.config.update(
@@ -61,9 +73,10 @@ app.config.update(
     JSON_SORT_KEYS=False,
     JSONIFY_PRETTYPRINT_REGULAR=False,
     PERMANENT_SESSION_LIFETIME=timedelta(hours=2),
-    SESSION_COOKIE_SECURE=False,  # Railway HTTPS 자동 처리
+    SESSION_COOKIE_SECURE=IS_PRODUCTION,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax'
+    SESSION_COOKIE_SAMESITE='Lax',
+    SEND_FILE_MAX_AGE_DEFAULT=31536000  # 1년 캐시
 )
 
 # 지원 언어 정의
@@ -73,7 +86,7 @@ SUPPORTED_LANGUAGES = {
     'zh': '中文',
     'vi': 'Tiếng Việt',
     'th': 'ไทย',
-    'ja': '日본語'
+    'ja': '日本語'
 }
 
 # Railway 로깅 설정
@@ -102,6 +115,98 @@ upload_lock = threading.Lock()
 file_cache = {}
 cache_lock = threading.Lock()
 MAX_CACHE_SIZE = 50 * 1024 * 1024  # 50MB 캐시 제한
+
+# Branch.io API 클래스
+class BranchAPI:
+    """Branch.io API 통합"""
+    
+    def __init__(self):
+        self.branch_key = BRANCH_KEY
+        self.branch_secret = BRANCH_SECRET
+        self.base_url = "https://api2.branch.io/v1"
+        self.custom_domain = CUSTOM_DOMAIN
+        self.branch_domain = BRANCH_DOMAIN
+        
+    def create_deep_link(self, video_id: str, title: str = "", description: str = "") -> dict:
+        """Branch.io 딥링크 생성"""
+        try:
+            # 커스텀 도메인이 있으면 사용
+            base_domain = self.custom_domain if self.custom_domain else self.branch_domain
+            
+            # Branch.io 링크 데이터
+            link_data = {
+                "branch_key": self.branch_key,
+                "channel": "training_platform",
+                "feature": "video_sharing",
+                "campaign": "video_watch",
+                "data": {
+                    "$desktop_url": f"https://{base_domain}/watch/{video_id}",
+                    "$ios_url": f"https://{base_domain}/watch/{video_id}",
+                    "$android_url": f"https://{base_domain}/watch/{video_id}",
+                    "$og_title": title or "Training Video",
+                    "$og_description": description or "Watch training video in your preferred language",
+                    "$og_image_url": f"https://{RAILWAY_STATIC_URL or base_domain}/thumbnail/default.png",
+                    "$canonical_url": f"https://{base_domain}/watch/{video_id}",
+                    "video_id": video_id,
+                    "custom_data": {
+                        "type": "training_video",
+                        "platform": "multi_language",
+                        "created_at": datetime.now().isoformat()
+                    }
+                }
+            }
+            
+            # 커스텀 도메인 사용 시 alias 설정
+            if self.custom_domain:
+                link_data["alias"] = f"video-{video_id}"
+                link_data["type"] = 2  # Marketing link
+            
+            # Branch.io API 호출
+            response = requests.post(
+                f"{self.base_url}/url",
+                json=link_data,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return {
+                    "success": True,
+                    "url": result.get("url", f"https://{base_domain}/watch/{video_id}"),
+                    "custom_domain_url": f"https://{self.custom_domain}/watch/{video_id}" if self.custom_domain else None
+                }
+            else:
+                logger.error(f"Branch.io API 오류: {response.status_code} - {response.text}")
+                # 폴백 URL 반환
+                return {
+                    "success": False,
+                    "url": f"https://{base_domain}/watch/{video_id}",
+                    "error": "Branch.io API 오류"
+                }
+                
+        except Exception as e:
+            logger.error(f"Branch.io 딥링크 생성 실패: {e}")
+            # 폴백 URL 반환
+            base_domain = self.custom_domain if self.custom_domain else self.branch_domain
+            return {
+                "success": False,
+                "url": f"https://{base_domain}/watch/{video_id}",
+                "error": str(e)
+            }
+    
+    def update_link_metadata(self, video_id: str, metadata: dict) -> bool:
+        """링크 메타데이터 업데이트"""
+        try:
+            # Branch.io 링크 업데이트 API 호출
+            # 실제 구현은 Branch.io API 문서 참고
+            return True
+        except Exception as e:
+            logger.error(f"Branch.io 메타데이터 업데이트 실패: {e}")
+            return False
+
+# Branch API 인스턴스
+branch_api = BranchAPI()
 
 def safe_get_service_instances():
     """Railway 안전한 서비스 인스턴스 획득"""
@@ -185,6 +290,19 @@ def get_content_type(file_path: str) -> str:
     }
     return content_types.get(ext, 'application/octet-stream')
 
+def cache_control(max_age=3600):
+    """캐시 컨트롤 데코레이터"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            response = f(*args, **kwargs)
+            if isinstance(response, Response):
+                response.headers['Cache-Control'] = f'public, max-age={max_age}'
+                response.headers['Vary'] = 'Accept-Encoding'
+            return response
+        return decorated_function
+    return decorator
+
 # Railway 헬스체크 (가장 중요!)
 @app.route('/health')
 def health_check():
@@ -200,7 +318,8 @@ def health_check():
             'cached_files': len(file_cache),
             'python_version': sys.version.split()[0],
             'flask_ready': True,
-            'brunch_domain': BRUNCH_DOMAIN,
+            'branch_configured': bool(BRANCH_KEY),
+            'custom_domain': CUSTOM_DOMAIN or 'not_configured',
             'proxy_enabled': True,
             'hybrid_mode': True
         }
@@ -215,9 +334,10 @@ def health_check():
             'timestamp': datetime.now().isoformat()
         }), 500
 
-# =================== Railway 프록시 엔드포인트들 ===================
+# =================== Railway 프록시 엔드포인트들 (개선) ===================
 
 @app.route('/qr/<path:s3_key>')
+@cache_control(max_age=86400)  # 1일 캐시
 def proxy_qr_code(s3_key):
     """QR 코드 파일 프록시"""
     try:
@@ -239,8 +359,8 @@ def proxy_qr_code(s3_key):
                     cached_item['data'],
                     mimetype=cached_item['content_type'],
                     headers={
-                        'Cache-Control': 'public, max-age=86400',  # 1일 캐시
-                        'Content-Length': str(len(cached_item['data']))
+                        'Content-Length': str(len(cached_item['data'])),
+                        'ETag': cached_item.get('etag', '')
                     }
                 )
         
@@ -250,6 +370,7 @@ def proxy_qr_code(s3_key):
             return jsonify({'error': 'QR 코드를 찾을 수 없습니다'}), 404
         
         content_type = 'image/png'  # QR 코드는 기본적으로 PNG
+        etag = hashlib.md5(file_data).hexdigest()
         
         # 캐시에 저장 (크기 확인)
         if len(file_data) < MAX_CACHE_SIZE // 10:  # 캐시 크기의 10% 이하만 저장
@@ -257,7 +378,8 @@ def proxy_qr_code(s3_key):
                 file_cache[cache_key] = {
                     'data': file_data,
                     'content_type': content_type,
-                    'last_access': time.time()
+                    'last_access': time.time(),
+                    'etag': etag
                 }
         
         logger.debug(f"✅ QR 코드 프록시 성공: {s3_key} ({len(file_data)} bytes)")
@@ -266,8 +388,8 @@ def proxy_qr_code(s3_key):
             file_data,
             mimetype=content_type,
             headers={
-                'Cache-Control': 'public, max-age=86400',
-                'Content-Length': str(len(file_data))
+                'Content-Length': str(len(file_data)),
+                'ETag': etag
             }
         )
         
@@ -276,6 +398,7 @@ def proxy_qr_code(s3_key):
         return jsonify({'error': 'QR 코드 로드 실패'}), 500
 
 @app.route('/thumbnail/<path:s3_key>')
+@cache_control(max_age=86400)  # 1일 캐시
 def proxy_thumbnail(s3_key):
     """썸네일 이미지 파일 프록시"""
     try:
@@ -297,8 +420,8 @@ def proxy_thumbnail(s3_key):
                     cached_item['data'],
                     mimetype=cached_item['content_type'],
                     headers={
-                        'Cache-Control': 'public, max-age=86400',
-                        'Content-Length': str(len(cached_item['data']))
+                        'Content-Length': str(len(cached_item['data'])),
+                        'ETag': cached_item.get('etag', '')
                     }
                 )
         
@@ -308,6 +431,7 @@ def proxy_thumbnail(s3_key):
             return jsonify({'error': '썸네일을 찾을 수 없습니다'}), 404
         
         content_type = get_content_type(s3_key)
+        etag = hashlib.md5(file_data).hexdigest()
         
         # 캐시에 저장 (썸네일은 보통 작으므로 캐시)
         if len(file_data) < MAX_CACHE_SIZE // 5:  # 캐시 크기의 20% 이하만 저장
@@ -315,7 +439,8 @@ def proxy_thumbnail(s3_key):
                 file_cache[cache_key] = {
                     'data': file_data,
                     'content_type': content_type,
-                    'last_access': time.time()
+                    'last_access': time.time(),
+                    'etag': etag
                 }
         
         logger.debug(f"✅ 썸네일 프록시 성공: {s3_key} ({len(file_data)} bytes)")
@@ -324,8 +449,8 @@ def proxy_thumbnail(s3_key):
             file_data,
             mimetype=content_type,
             headers={
-                'Cache-Control': 'public, max-age=86400',
-                'Content-Length': str(len(file_data))
+                'Content-Length': str(len(file_data)),
+                'ETag': etag
             }
         )
         
@@ -334,8 +459,8 @@ def proxy_thumbnail(s3_key):
         return jsonify({'error': '썸네일 로드 실패'}), 500
 
 @app.route('/video/<path:s3_key>')
-def proxy_video(s3_key):
-    """동영상 파일 프록시 (스트리밍 지원)"""
+def proxy_video_stream(s3_key):
+    """개선된 비디오 스트리밍 프록시"""
     try:
         logger.debug(f"동영상 프록시 요청: {s3_key}")
         
@@ -343,82 +468,102 @@ def proxy_video(s3_key):
         if not uploader:
             return jsonify({'error': '서비스가 준비되지 않았습니다'}), 503
         
-        # 파일 메타데이터 먼저 확인
+        # 메타데이터 먼저 확인
         metadata = uploader.get_file_metadata_from_wasabi(s3_key)
         if not metadata:
             return jsonify({'error': '동영상을 찾을 수 없습니다'}), 404
         
-        content_type = metadata['content_type']
         content_length = metadata['content_length']
+        content_type = metadata['content_type']
+        etag = metadata.get('etag', '')
         
-        # Range 요청 처리 (동영상 스트리밍)
+        # If-None-Match 헤더 확인 (캐시 검증)
+        if_none_match = request.headers.get('If-None-Match')
+        if if_none_match and if_none_match == etag:
+            return Response(status=304)  # Not Modified
+        
+        # Range 헤더 처리
         range_header = request.headers.get('Range')
         if range_header:
-            logger.debug(f"Range 요청: {range_header}")
+            # Range 요청 파싱
+            byte_start = 0
+            byte_end = content_length - 1
             
-            # Range 파싱 (예: bytes=0-1023)
-            try:
-                ranges = range_header.replace('bytes=', '').split('-')
-                start = int(ranges[0]) if ranges[0] else 0
-                end = int(ranges[1]) if ranges[1] else content_length - 1
-                
-                # Range가 유효한지 확인
-                if start >= content_length or end >= content_length or start > end:
-                    return Response(status=416)  # Range Not Satisfiable
-                
-                # Wasabi에서 Range 요청으로 부분 다운로드
+            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+            if match:
+                byte_start = int(match.group(1))
+                if match.group(2):
+                    byte_end = int(match.group(2))
+            
+            # Range 유효성 검사
+            if byte_start >= content_length or byte_end >= content_length or byte_start > byte_end:
+                return Response(status=416)  # Range Not Satisfiable
+            
+            # 스트림 생성 함수
+            def generate():
                 try:
+                    # S3에서 Range 요청
                     response = uploader.s3_client.get_object(
                         Bucket=uploader.bucket_name,
                         Key=s3_key,
-                        Range=f'bytes={start}-{end}'
-                    )
-                    partial_data = response['Body'].read()
-                    
-                    logger.debug(f"✅ 동영상 Range 프록시: {s3_key} (bytes {start}-{end})")
-                    
-                    return Response(
-                        partial_data,
-                        206,  # Partial Content
-                        mimetype=content_type,
-                        headers={
-                            'Content-Range': f'bytes {start}-{end}/{content_length}',
-                            'Accept-Ranges': 'bytes',
-                            'Content-Length': str(len(partial_data)),
-                            'Cache-Control': 'public, max-age=3600'
-                        }
+                        Range=f'bytes={byte_start}-{byte_end}'
                     )
                     
-                except Exception as range_error:
-                    logger.warning(f"Range 요청 실패, 전체 파일로 폴백: {range_error}")
-                    # Range 실패 시 전체 파일로 폴백
-                    
-            except (ValueError, IndexError) as parse_error:
-                logger.warning(f"Range 헤더 파싱 실패: {parse_error}")
-                # 파싱 실패 시 전체 파일로 폴백
-        
-        # 전체 파일 다운로드 (Range 요청이 없거나 실패한 경우)
-        file_data = uploader.get_file_from_wasabi(s3_key)
-        if not file_data:
-            return jsonify({'error': '동영상을 찾을 수 없습니다'}), 404
-        
-        logger.debug(f"✅ 동영상 전체 프록시: {s3_key} ({len(file_data)} bytes)")
-        
-        return Response(
-            file_data,
-            mimetype=content_type,
-            headers={
-                'Content-Length': str(len(file_data)),
+                    # 청크 단위로 스트리밍 (1MB 청크)
+                    chunk_size = 1024 * 1024
+                    for chunk in response['Body'].iter_chunks(chunk_size=chunk_size):
+                        yield chunk
+                        
+                except Exception as e:
+                    logger.error(f"스트리밍 오류: {e}")
+                    return
+            
+            # 206 Partial Content 응답
+            headers = {
+                'Content-Type': content_type,
                 'Accept-Ranges': 'bytes',
-                'Cache-Control': 'public, max-age=3600'
+                'Content-Range': f'bytes {byte_start}-{byte_end}/{content_length}',
+                'Content-Length': str(byte_end - byte_start + 1),
+                'ETag': etag,
+                'Cache-Control': 'private, max-age=3600'
             }
-        )
+            
+            return Response(generate(), status=206, headers=headers)
         
+        else:
+            # 전체 파일 요청
+            def generate():
+                try:
+                    response = uploader.s3_client.get_object(
+                        Bucket=uploader.bucket_name,
+                        Key=s3_key
+                    )
+                    
+                    # 청크 단위로 스트리밍
+                    chunk_size = 1024 * 1024
+                    for chunk in response['Body'].iter_chunks(chunk_size=chunk_size):
+                        yield chunk
+                        
+                except Exception as e:
+                    logger.error(f"스트리밍 오류: {e}")
+                    return
+            
+            headers = {
+                'Content-Type': content_type,
+                'Content-Length': str(content_length),
+                'Accept-Ranges': 'bytes',
+                'ETag': etag,
+                'Cache-Control': 'private, max-age=3600'
+            }
+            
+            return Response(generate(), headers=headers)
+            
     except Exception as e:
-        logger.error(f"❌ 동영상 프록시 실패: {s3_key} - {e}")
+        logger.error(f"❌ 비디오 프록시 실패: {s3_key} - {e}")
         return jsonify({'error': '동영상 로드 실패'}), 500
 
 @app.route('/file/<path:s3_key>')
+@cache_control(max_age=3600)
 def proxy_generic_file(s3_key):
     """일반 파일 프록시 (필요시 확장 가능)"""
     try:
@@ -428,20 +573,35 @@ def proxy_generic_file(s3_key):
         if not uploader:
             return jsonify({'error': '서비스가 준비되지 않았습니다'}), 503
         
-        file_data = uploader.get_file_from_wasabi(s3_key)
-        if not file_data:
+        # 메타데이터 확인
+        metadata = uploader.get_file_metadata_from_wasabi(s3_key)
+        if not metadata:
             return jsonify({'error': '파일을 찾을 수 없습니다'}), 404
         
-        content_type = get_content_type(s3_key)
+        content_type = metadata.get('content_type', get_content_type(s3_key))
+        content_length = metadata['content_length']
         
-        logger.debug(f"✅ 일반 파일 프록시: {s3_key} ({len(file_data)} bytes)")
+        # 스트리밍 응답
+        def generate():
+            try:
+                response = uploader.s3_client.get_object(
+                    Bucket=uploader.bucket_name,
+                    Key=s3_key
+                )
+                
+                for chunk in response['Body'].iter_chunks(chunk_size=1024*1024):
+                    yield chunk
+                    
+            except Exception as e:
+                logger.error(f"파일 스트리밍 오류: {e}")
+                return
         
         return Response(
-            file_data,
+            generate(),
             mimetype=content_type,
             headers={
-                'Content-Length': str(len(file_data)),
-                'Cache-Control': 'public, max-age=3600'
+                'Content-Length': str(content_length),
+                'Content-Disposition': f'inline; filename="{os.path.basename(s3_key)}"'
             }
         )
         
@@ -449,7 +609,7 @@ def proxy_generic_file(s3_key):
         logger.error(f"❌ 일반 파일 프록시 실패: {s3_key} - {e}")
         return jsonify({'error': '파일 로드 실패'}), 500
 
-# =================== 기존 라우트들 ===================
+# =================== 기존 라우트들 (개선) ===================
 
 @app.route('/')
 def index():
@@ -458,7 +618,8 @@ def index():
         return render_template('upload_form.html',
                              mains=CATEGORY_STRUCTURE['main_categories'],
                              subs=CATEGORY_STRUCTURE['sub_categories'],
-                             leafs=CATEGORY_STRUCTURE['leaf_categories'])
+                             leafs=CATEGORY_STRUCTURE['leaf_categories'],
+                             branch_domain=CUSTOM_DOMAIN or BRANCH_DOMAIN)
     except Exception as e:
         logger.error(f"메인 페이지 로드 실패: {e}")
         return render_template('error.html', 
@@ -545,6 +706,7 @@ def upload_video():
             # 실제 업로드 실행 (하이브리드 방식)
             logger.info(f"하이브리드 업로드 시작: {group_name}")
             
+            # Branch.io 통합 정보 추가
             result = uploader.upload_video(
                 video_path=video_path,
                 thumbnail_path=thumbnail_path,
@@ -553,7 +715,9 @@ def upload_video():
                 sub_category=sub_category,
                 leaf_category=sub_sub_category,
                 content_description=content_description,
-                translated_filenames=translated_filenames
+                translated_filenames=translated_filenames,
+                branch_domain=CUSTOM_DOMAIN or BRANCH_DOMAIN,
+                branch_api=branch_api
             )
             
             if result['success']:
@@ -565,7 +729,9 @@ def upload_video():
                 return render_template('upload_success.html',
                                      result=result,
                                      group_name=group_name,
-                                     category_path=category_path)
+                                     category_path=category_path,
+                                     custom_domain=CUSTOM_DOMAIN,
+                                     branch_domain=BRANCH_DOMAIN)
             else:
                 logger.error(f"하이브리드 업로드 실패: {result.get('error', '알 수 없는 오류')}")
                 flash(f'업로드 실패: {result.get("error", "알 수 없는 오류")}', 'error')
@@ -654,10 +820,12 @@ def watch_video(video_id):
         
         # 최종 폴백
         if not video_url:
-            video_url = f"https://{BRUNCH_DOMAIN}/watch/{video_id}"
+            base_domain = CUSTOM_DOMAIN if CUSTOM_DOMAIN else BRANCH_DOMAIN
+            video_url = f"https://{base_domain}/watch/{video_id}"
         
         # 앱용 JSON 응답
         if is_app_request:
+            base_domain = CUSTOM_DOMAIN if CUSTOM_DOMAIN else BRANCH_DOMAIN
             response_data = {
                 'success': True,
                 'video_id': video_id,
@@ -670,8 +838,9 @@ def watch_video(video_id):
                 'language_name': SUPPORTED_LANGUAGES.get(actual_language, '한국어'),
                 'has_language_video': has_language_video,
                 'supported_languages': list(SUPPORTED_LANGUAGES.keys()),
-                'brunch_domain': video_data.get('brunch_domain', BRUNCH_DOMAIN),
-                'single_qr_link': f"https://{BRUNCH_DOMAIN}/watch/{video_id}",
+                'branch_domain': video_data.get('branch_domain', base_domain),
+                'custom_domain': CUSTOM_DOMAIN,
+                'single_qr_link': f"https://{base_domain}/watch/{video_id}",
                 'railway_proxy_enabled': video_data.get('railway_proxy_enabled', True),
                 'metadata': {
                     'upload_date': video_data.get('upload_date', ''),
@@ -697,6 +866,7 @@ def watch_video(video_id):
         
         # 웹 브라우저용 HTML 응답
         else:
+            base_domain = CUSTOM_DOMAIN if CUSTOM_DOMAIN else BRANCH_DOMAIN
             return render_template('watch.html',
                                  video_id=video_id,
                                  video_data=video_data,
@@ -705,8 +875,9 @@ def watch_video(video_id):
                                  actual_language=actual_language,
                                  has_language_video=has_language_video,
                                  supported_languages=SUPPORTED_LANGUAGES,
-                                 brunch_domain=video_data.get('brunch_domain', BRUNCH_DOMAIN),
-                                 single_qr_link=f"https://{BRUNCH_DOMAIN}/watch/{video_id}",
+                                 branch_domain=base_domain,
+                                 custom_domain=CUSTOM_DOMAIN,
+                                 single_qr_link=f"https://{base_domain}/watch/{video_id}",
                                  railway_proxy_enabled=video_data.get('railway_proxy_enabled', True))
         
     except Exception as e:
@@ -766,14 +937,16 @@ def get_video_languages(video_id):
                 'railway_proxy_enabled': ko_data.get('railway_proxy_enabled', True)
             }
         
+        base_domain = CUSTOM_DOMAIN if CUSTOM_DOMAIN else BRANCH_DOMAIN
         return jsonify({
             'video_id': video_id,
             'available_languages': available_languages,
             'language_details': language_details,
             'supported_languages': SUPPORTED_LANGUAGES,
             'total_available': len([lang for lang, available in available_languages.items() if available]),
-            'single_qr_link': f"https://{BRUNCH_DOMAIN}/watch/{video_id}",
-            'brunch_domain': BRUNCH_DOMAIN,
+            'single_qr_link': f"https://{base_domain}/watch/{video_id}",
+            'branch_domain': base_domain,
+            'custom_domain': CUSTOM_DOMAIN,
             'railway_proxy_enabled': True
         }), 200
         
@@ -828,11 +1001,13 @@ def get_existing_videos():
 
         videos_data = uploader.get_existing_videos()
         
+        base_domain = CUSTOM_DOMAIN if CUSTOM_DOMAIN else BRANCH_DOMAIN
         return jsonify({
             'success': True,
             'videos': videos_data,
             'total': len(videos_data),
-            'brunch_domain': BRUNCH_DOMAIN,
+            'branch_domain': base_domain,
+            'custom_domain': CUSTOM_DOMAIN,
             'railway_proxy_enabled': True,
             'hybrid_mode': True
         })
@@ -910,8 +1085,10 @@ def upload_language_video():
                 logger.info(f"언어별 영상 업로드 성공 (하이브리드): {group_id} ({language_code})")
                 
                 # 결과에 Railway 프록시 정보 추가
-                result['single_qr_link'] = f"https://{BRUNCH_DOMAIN}/watch/{group_id}"
-                result['brunch_domain'] = BRUNCH_DOMAIN
+                base_domain = CUSTOM_DOMAIN if CUSTOM_DOMAIN else BRANCH_DOMAIN
+                result['single_qr_link'] = f"https://{base_domain}/watch/{group_id}"
+                result['branch_domain'] = base_domain
+                result['custom_domain'] = CUSTOM_DOMAIN
                 result['railway_proxy_enabled'] = True
                 
                 return jsonify(result)
@@ -924,6 +1101,34 @@ def upload_language_video():
         return jsonify({
             'success': False,
             'error': f'업로드 중 오류: {str(e)}'
+        }), 500
+
+# Branch.io 관련 엔드포인트
+@app.route('/api/branch/create_link', methods=['POST'])
+def create_branch_link():
+    """Branch.io 링크 생성 API"""
+    try:
+        data = request.get_json()
+        video_id = data.get('video_id', '')
+        title = data.get('title', '')
+        description = data.get('description', '')
+        
+        if not video_id:
+            return jsonify({
+                'success': False,
+                'error': '비디오 ID가 필요합니다'
+            }), 400
+        
+        # Branch.io 딥링크 생성
+        result = branch_api.create_deep_link(video_id, title, description)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Branch.io 링크 생성 실패: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 # Railway 오류 처리
@@ -1011,117 +1216,14 @@ def cache_status():
             'error': str(e)
         }), 500
 
-# QR 코드 재생성 엔드포인트 (필요시 사용)
-@app.route('/api/admin/regenerate_qr/<video_id>', methods=['POST'])
-def regenerate_qr_code(video_id):
-    """QR 코드 재생성 (관리용)"""
-    try:
-        uploader, _ = safe_get_service_instances()
-        if not uploader:
-            return jsonify({
-                'success': False,
-                'error': '서비스가 준비되지 않았습니다'
-            }), 503
-        
-        # 비디오 정보 확인
-        video_status = uploader.get_upload_status(video_id)
-        if not video_status['success']:
-            return jsonify({
-                'success': False,
-                'error': '영상을 찾을 수 없습니다'
-            }), 404
-        
-        video_data = video_status
-        group_name = video_data.get('group_name', 'Unknown')
-        
-        # QR 코드 재생성
-        with tempfile.TemporaryDirectory() as temp_dir:
-            qr_temp_path = os.path.join(temp_dir, f"qr_regenerated_{video_id}.png")
-            
-            if uploader.create_qr_with_thumbnail(video_id, group_name, None, qr_temp_path):
-                # 새 S3 키 생성
-                base_folder = video_data.get('base_folder', f"videos/{video_id}")
-                qr_s3_key = f"{base_folder}/qr_regenerated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                
-                # Wasabi 업로드
-                qr_url = uploader.upload_to_wasabi(qr_temp_path, qr_s3_key, 'image/png')
-                
-                if qr_url:
-                    # Firestore 업데이트
-                    uploader.db.collection('uploads').document(video_id).update({
-                        'qr_s3_key': qr_s3_key,
-                        'qr_url': qr_url,
-                        'qr_regenerated_at': firestore.SERVER_TIMESTAMP
-                    })
-                    
-                    return jsonify({
-                        'success': True,
-                        'qr_url': qr_url,
-                        'message': 'QR 코드가 성공적으로 재생성되었습니다'
-                    })
-                else:
-                    return jsonify({
-                        'success': False,
-                        'error': 'QR 코드 업로드 실패'
-                    }), 500
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': 'QR 코드 생성 실패'
-                }), 500
-                
-    except Exception as e:
-        logger.error(f"QR 코드 재생성 실패: {e}")
-        return jsonify({
-            'success': False,
-            'error': f'QR 코드 재생성 중 오류: {str(e)}'
-        }), 500
-
-# 파일 정보 확인 엔드포인트
-@app.route('/api/admin/file_info/<path:s3_key>')
-def get_file_info(s3_key):
-    """파일 정보 확인 (관리용)"""
-    try:
-        uploader, _ = safe_get_service_instances()
-        if not uploader:
-            return jsonify({'error': '서비스가 준비되지 않았습니다'}), 503
-        
-        # Wasabi에서 파일 메타데이터 조회
-        metadata = uploader.get_file_metadata_from_wasabi(s3_key)
-        if not metadata:
-            return jsonify({'error': '파일을 찾을 수 없습니다'}), 404
-        
-        # 프록시 URL 생성
-        if 'qr' in s3_key.lower():
-            proxy_url = f"https://{BRUNCH_DOMAIN}/qr/{s3_key}"
-        elif 'thumbnail' in s3_key.lower():
-            proxy_url = f"https://{BRUNCH_DOMAIN}/thumbnail/{s3_key}"
-        elif any(video_ext in s3_key.lower() for video_ext in ['.mp4', '.avi', '.mov', '.wmv']):
-            proxy_url = f"https://{BRUNCH_DOMAIN}/video/{s3_key}"
-        else:
-            proxy_url = f"https://{BRUNCH_DOMAIN}/file/{s3_key}"
-        
-        return jsonify({
-            'success': True,
-            's3_key': s3_key,
-            'proxy_url': proxy_url,
-            'metadata': metadata,
-            'file_exists': True
-        })
-        
-    except Exception as e:
-        logger.error(f"파일 정보 조회 실패: {s3_key} - {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 # Railway 배포용 메인 실행
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('DEBUG', 'false').lower() == 'true'
     
-    logger.info(f"🚀 Railway 하이브리드 서버 시작 - 브런치 도메인: {BRUNCH_DOMAIN}")
+    logger.info(f"🚀 Railway 하이브리드 서버 시작")
+    logger.info(f"🔗 Branch.io 도메인: {BRANCH_DOMAIN}")
+    logger.info(f"🌐 커스텀 도메인: {CUSTOM_DOMAIN or '미설정'}")
     logger.info(f"🔄 프록시 엔드포인트: /qr/, /thumbnail/, /video/, /file/")
     logger.info(f"💾 Wasabi 저장소 + Railway 프록시 = 영구 URL 보장")
     
