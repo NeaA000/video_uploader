@@ -51,8 +51,8 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-railway-2024')
 
 # 브런치 도메인 설정
-BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'videouploader-production.up.railway.app')
-BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'videouploader-production.up.railway.app')
+BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'jwvduc.app.link')
+BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
 
 # Railway 최적화 설정
 app.config.update(
