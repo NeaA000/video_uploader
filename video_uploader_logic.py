@@ -41,8 +41,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 브런치 도메인 설정
-BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'jwvduc.app.link')
-BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
+BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'videouploader-production.up.railway.app')
+BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'videouploader-production.up.railway.app')
 
 # 상수 정의 (확장된 지원 형식)
 SUPPORTED_VIDEO_FORMATS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv', '.3gp', '.m4v', '.f4v', '.m2v'}

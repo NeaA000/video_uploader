@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        'About': "Railway 하이브리드 배포용 다국어 강의 업로드 시스템 v3.2"
+        'About': "Railway 하이브리드 배포용 다국어 강의 업로드 시스템 v3.2 - videouploader-production.up.railway.app"
     }
 )
 
