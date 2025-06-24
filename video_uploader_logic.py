@@ -1,4 +1,4 @@
-# video_uploader_logic.py - 하이브리드 프록시 방식 (Wasabi 저장 + Railway 프록시)
+# video_uploader_logic.py - 개선된 하이브리드 프록시 방식 (Branch.io 통합)
 import os
 import sys
 import uuid
@@ -40,9 +40,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 브런치 도메인 설정
-BRUNCH_DOMAIN = os.environ.get('BRUNCH_DOMAIN', 'jwvduc.app.link')
-BRUNCH_ALTERNATE_DOMAIN = os.environ.get('BRUNCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
+# Branch.io 및 도메인 설정
+BRANCH_KEY = os.environ.get('BRANCH_KEY', '')
+CUSTOM_DOMAIN = os.environ.get('CUSTOM_DOMAIN', '')
+BRANCH_DOMAIN = os.environ.get('BRANCH_DOMAIN', 'jwvduc.app.link')
+BRANCH_ALTERNATE_DOMAIN = os.environ.get('BRANCH_ALTERNATE_DOMAIN', 'jwvduc-alternate.app.link')
+RAILWAY_STATIC_URL = os.environ.get('RAILWAY_STATIC_URL', '')
 
 # 상수 정의 (확장된 지원 형식)
 SUPPORTED_VIDEO_FORMATS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv', '.3gp', '.m4v', '.f4v', '.m2v'}
@@ -278,14 +281,15 @@ class GoogleTranslator:
         return self._make_filename_safe(result)
 
 class VideoUploaderLogic:
-    """하이브리드 비디오 업로더 - Wasabi 저장 + Railway 프록시"""
+    """하이브리드 비디오 업로더 - Wasabi 저장 + Railway 프록시 + Branch.io"""
     
     def __init__(self):
         self._initialization_lock = threading.Lock()
         self._service_health = {
             'firebase': False,
             'wasabi': False,
-            'translator': False
+            'translator': False,
+            'branch': bool(BRANCH_KEY)
         }
         
         try:
@@ -312,12 +316,22 @@ class VideoUploaderLogic:
                 self.bucket_name = os.environ['WASABI_BUCKET_NAME']
                 self._service_health['wasabi'] = True
                 
-                # 브런치 도메인 설정 (Railway 프록시용)
-                self.brunch_domain = BRUNCH_DOMAIN
-                self.brunch_alternate_domain = BRUNCH_ALTERNATE_DOMAIN
+                # 도메인 설정
+                self.custom_domain = CUSTOM_DOMAIN
+                self.branch_domain = BRANCH_DOMAIN
+                self.branch_alternate_domain = BRANCH_ALTERNATE_DOMAIN
+                self.railway_url = RAILWAY_STATIC_URL
+                
+                # 프라이머리 도메인 결정
+                if self.custom_domain:
+                    self.primary_domain = self.custom_domain
+                elif self.railway_url:
+                    self.primary_domain = self.railway_url.replace('https://', '').replace('http://', '')
+                else:
+                    self.primary_domain = self.branch_domain
                 
                 # Railway 프록시 URL 구조
-                self.app_base_url = f'https://{self.brunch_domain}'
+                self.app_base_url = f'https://{self.primary_domain}'
                 self.proxy_endpoints = {
                     'qr': f'{self.app_base_url}/qr/',
                     'thumbnail': f'{self.app_base_url}/thumbnail/',
@@ -333,7 +347,10 @@ class VideoUploaderLogic:
                     use_threads=True
                 )
                 
-                logger.info(f"🔧 하이브리드 서비스 초기화 완료 (프록시 도메인: {self.brunch_domain})")
+                logger.info(f"🔧 하이브리드 서비스 초기화 완료")
+                logger.info(f"📍 프라이머리 도메인: {self.primary_domain}")
+                logger.info(f"🔗 Branch.io 도메인: {self.branch_domain}")
+                logger.info(f"🌐 커스텀 도메인: {self.custom_domain or '미설정'}")
                 
             except Exception as e:
                 logger.error(f"❌ 서비스 초기화 실패: {e}")
@@ -410,6 +427,18 @@ class VideoUploaderLogic:
             return process.memory_info().rss / 1024 / 1024
         except ImportError:
             return 0.0
+    
+    def get_railway_proxy_url(self, s3_key: str) -> str:
+        """Railway 프록시 URL 생성 (개선)"""
+        # 파일 타입별 프록시 엔드포인트
+        if 'qr' in s3_key.lower():
+            return f"{self.proxy_endpoints['qr']}{s3_key}"
+        elif 'thumbnail' in s3_key.lower():
+            return f"{self.proxy_endpoints['thumbnail']}{s3_key}"
+        elif any(ext in s3_key.lower() for ext in ['.mp4', '.avi', '.mov', '.wmv']):
+            return f"{self.proxy_endpoints['video']}{s3_key}"
+        else:
+            return f"{self.app_base_url}/file/{s3_key}"
     
     def validate_file(self, file_path: str, file_type: str = 'video') -> bool:
         """개선된 파일 검증"""
@@ -524,12 +553,15 @@ class VideoUploaderLogic:
                 }
     
     def create_qr_with_thumbnail(self, video_id: str, title: str = "", thumbnail_path: str = None,
-                                output_path: str = None) -> bool:
-        """QR 코드 + 썸네일 결합 생성 (Railway 프록시 URL 사용)"""
+                                output_path: str = None, use_custom_domain: bool = True) -> bool:
+        """QR 코드 + 썸네일 결합 생성 (Branch.io/커스텀 도메인 사용)"""
         with self._railway_memory_context():
             try:
-                # Railway 프록시 URL 사용 (영구 URL)
-                qr_link = f"https://{self.brunch_domain}/watch/{video_id}"
+                # QR 링크 생성 (우선순위: 커스텀 도메인 > Branch.io)
+                if use_custom_domain and self.custom_domain:
+                    qr_link = f"https://{self.custom_domain}/watch/{video_id}"
+                else:
+                    qr_link = f"https://{self.branch_domain}/watch/{video_id}"
                 
                 logger.debug(f"QR+썸네일 결합 생성 시작: {qr_link}")
                 
@@ -653,7 +685,10 @@ class VideoUploaderLogic:
                 # 실패 시 기본 QR 코드라도 생성 시도
                 try:
                     qr = qrcode.QRCode(version=1, box_size=6, border=4)
-                    qr.add_data(f"https://{self.brunch_domain}/watch/{video_id}")
+                    if self.custom_domain:
+                        qr.add_data(f"https://{self.custom_domain}/watch/{video_id}")
+                    else:
+                        qr.add_data(f"https://{self.branch_domain}/watch/{video_id}")
                     qr.make(fit=True)
                     qr_img = qr.make_image(fill_color="black", back_color="white")
                     qr_img.save(output_path or f"qr_{video_id}.png")
@@ -700,17 +735,8 @@ class VideoUploaderLogic:
                 Callback=railway_progress_callback if progress_callback else None
             )
             
-            # Railway 프록시 URL 반환 (영구 URL)
-            # 파일 타입에 따라 적절한 프록시 엔드포인트 결정
-            if 'qr' in s3_key.lower():
-                proxy_url = f"{self.proxy_endpoints['qr']}{s3_key}"
-            elif 'thumbnail' in s3_key.lower():
-                proxy_url = f"{self.proxy_endpoints['thumbnail']}{s3_key}"
-            elif any(video_ext in s3_key.lower() for video_ext in ['.mp4', '.avi', '.mov', '.wmv']):
-                proxy_url = f"{self.proxy_endpoints['video']}{s3_key}"
-            else:
-                # 기본 파일 프록시 (필요시 추가)
-                proxy_url = f"{self.app_base_url}/file/{s3_key}"
+            # Railway 프록시 URL 반환
+            proxy_url = self.get_railway_proxy_url(s3_key)
             
             logger.info(f"✅ Wasabi 업로드 완료 (Railway 프록시 URL): {s3_key} -> {proxy_url}")
             return proxy_url
@@ -759,8 +785,9 @@ class VideoUploaderLogic:
     def upload_video(self, video_path: str, thumbnail_path: Optional[str], group_name: str,
                     main_category: str, sub_category: str, leaf_category: str,
                     content_description: str, translated_filenames: Dict[str, str],
+                    branch_domain: str = None, branch_api = None,
                     progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """하이브리드 메인 비디오 업로드 (Wasabi 저장 + Railway 프록시 URL)"""
+        """하이브리드 메인 비디오 업로드 (Wasabi 저장 + Railway 프록시 URL + Branch.io)"""
         
         with self._railway_memory_context():
             try:
@@ -836,8 +863,29 @@ class VideoUploaderLogic:
                 
                 update_progress(80, "📱 QR+썸네일 결합 코드 생성 중...")
                 
+                # Branch.io 딥링크 생성 (있는 경우)
+                branch_link_info = None
+                if branch_api:
+                    branch_result = branch_api.create_deep_link(
+                        video_id=group_id,
+                        title=group_name,
+                        description=content_description[:100]
+                    )
+                    if branch_result['success']:
+                        branch_link_info = branch_result
+                        logger.info(f"✅ Branch.io 딥링크 생성: {branch_result['url']}")
+                
+                # QR 링크 결정 (우선순위: 커스텀 도메인 > Branch.io > Railway)
+                if self.custom_domain:
+                    qr_link = f"https://{self.custom_domain}/watch/{group_id}"
+                elif branch_link_info and branch_link_info.get('custom_domain_url'):
+                    qr_link = branch_link_info['custom_domain_url']
+                elif branch_link_info:
+                    qr_link = branch_link_info['url']
+                else:
+                    qr_link = f"https://{self.primary_domain}/watch/{group_id}"
+                
                 # QR+썸네일 결합 코드 생성
-                qr_link = f"https://{self.brunch_domain}/watch/{group_id}"
                 qr_temp_path = os.path.join(tempfile.gettempdir(), f"qr_thumbnail_{group_id}.png")
                 
                 qr_title = group_name[:30]
@@ -848,7 +896,8 @@ class VideoUploaderLogic:
                 qr_s3_key = None
                 
                 # QR+썸네일 결합 생성
-                if self.create_qr_with_thumbnail(group_id, qr_title, thumbnail_path, qr_temp_path):
+                if self.create_qr_with_thumbnail(group_id, qr_title, thumbnail_path, qr_temp_path, 
+                                               use_custom_domain=bool(self.custom_domain)):
                     qr_s3_key = f"{base_folder}/{ko_filename}_qr_combined.png"
                     
                     # Wasabi 업로드 (Railway 프록시 URL 반환)
@@ -881,12 +930,21 @@ class VideoUploaderLogic:
                     'supported_languages_count': 1,
                     'total_file_size': video_metadata['file_size'],
                     'supported_video_languages': ['ko'],
-                    'brunch_domain': self.brunch_domain,
+                    'branch_domain': branch_domain or self.branch_domain,
+                    'custom_domain': self.custom_domain,
+                    'primary_domain': self.primary_domain,
                     'qr_combined_enabled': True,
                     'railway_proxy_enabled': True,  # Railway 프록시 사용 표시
                     'permanent_links': True,
                     'railway_optimized': True
                 }
+                
+                # Branch.io 정보 추가
+                if branch_link_info:
+                    main_doc_data.update({
+                        'branch_link': branch_link_info['url'],
+                        'branch_enabled': True
+                    })
                 
                 # Railway 프록시 URL과 Wasabi S3 키 모두 저장
                 if qr_url and qr_s3_key:
@@ -956,13 +1014,20 @@ class VideoUploaderLogic:
                     'qr_url': qr_url,  # Railway 프록시 URL
                     'thumbnail_url': thumbnail_url,  # Railway 프록시 URL
                     'metadata': video_metadata,
-                    'brunch_domain': self.brunch_domain,
+                    'branch_domain': branch_domain or self.branch_domain,
+                    'custom_domain': self.custom_domain,
+                    'primary_domain': self.primary_domain,
                     'qr_combined': True,
                     'storage_provider': 'wasabi_hybrid',
                     'railway_proxy_enabled': True,
                     'permanent_links': True,
                     'railway_optimized': True
                 }
+                
+                # Branch.io 정보 추가
+                if branch_link_info:
+                    result['branch_link'] = branch_link_info['url']
+                    result['branch_enabled'] = True
                 
                 logger.info(f"✅ 하이브리드 비디오 업로드 성공: {group_name} (ID: {group_id}) - Wasabi 저장 + Railway 프록시")
                 return result
@@ -1168,12 +1233,15 @@ class VideoUploaderLogic:
                         'qr_link': data.get('qr_link', ''),
                         'qr_url': data.get('qr_url', ''),  # Railway 프록시 URL
                         'thumbnail_url': data.get('thumbnail_url', ''),  # Railway 프록시 URL
-                        'brunch_domain': data.get('brunch_domain', self.brunch_domain),
+                        'branch_domain': data.get('branch_domain', self.branch_domain),
+                        'custom_domain': data.get('custom_domain', self.custom_domain),
+                        'primary_domain': data.get('primary_domain', self.primary_domain),
                         'qr_combined': data.get('qr_combined_enabled', False),
                         'storage_provider': data.get('storage_provider', 'wasabi_hybrid'),
                         'railway_proxy_enabled': data.get('railway_proxy_enabled', False),
                         'permanent_links': data.get('permanent_links', False),
-                        'railway_optimized': data.get('railway_optimized', False)
+                        'railway_optimized': data.get('railway_optimized', False),
+                        'branch_enabled': data.get('branch_enabled', False)
                     }
                     
                     videos_data.append(video_info)
@@ -1229,12 +1297,16 @@ class VideoUploaderLogic:
                 'qr_link': data.get('qr_link', ''),
                 'qr_url': data.get('qr_url', ''),  # Railway 프록시 URL
                 'thumbnail_url': data.get('thumbnail_url', ''),  # Railway 프록시 URL
-                'brunch_domain': data.get('brunch_domain', self.brunch_domain),
+                'branch_domain': data.get('branch_domain', self.branch_domain),
+                'custom_domain': data.get('custom_domain', self.custom_domain),
+                'primary_domain': data.get('primary_domain', self.primary_domain),
                 'qr_combined': data.get('qr_combined_enabled', False),
                 'storage_provider': data.get('storage_provider', 'wasabi_hybrid'),
                 'railway_proxy_enabled': data.get('railway_proxy_enabled', False),
                 'permanent_links': data.get('permanent_links', False),
-                'railway_optimized': data.get('railway_optimized', False)
+                'railway_optimized': data.get('railway_optimized', False),
+                'branch_enabled': data.get('branch_enabled', False),
+                'branch_link': data.get('branch_link', '')
             }
             
         except Exception as e:
@@ -1250,7 +1322,7 @@ class VideoUploaderLogic:
             'zh': '中文',
             'vi': 'Tiếng Việt',
             'th': 'ไทย',
-            'ja': '日본語'
+            'ja': '日本語'
         }
         return language_names.get(language_code, language_code)
     
@@ -1261,8 +1333,12 @@ class VideoUploaderLogic:
             'firebase_storage': False,  # 사용하지 않음
             'wasabi': self._service_health['wasabi'],
             'translator': self._service_health['translator'],
+            'branch': self._service_health['branch'],
             'memory_usage': self._get_memory_usage(),
-            'brunch_domain': self.brunch_domain,
+            'primary_domain': self.primary_domain,
+            'custom_domain': self.custom_domain,
+            'branch_domain': self.branch_domain,
+            'railway_url': self.railway_url,
             'single_qr_enabled': True,
             'qr_thumbnail_combined': True,
             'storage_provider': 'wasabi_hybrid',
