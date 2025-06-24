@@ -1,4 +1,4 @@
-# video_uploader_logic.py - Railway 최적화된 비디오 업로더 (googletrans 사용 버전)
+# video_uploader_logic.py - 완전한 비디오 업로더 (실제 동작 버전)
 import os
 import sys
 import uuid
@@ -202,7 +202,7 @@ class GoogleTranslator:
         return self._make_filename_safe(result)
 
 class VideoUploaderLogic:
-    """Railway 최적화된 비디오 업로더 메인 클래스"""
+    """완전한 비디오 업로더 메인 클래스"""
     
     def __init__(self):
         self._initialization_lock = threading.Lock()
@@ -215,498 +215,6 @@ class VideoUploaderLogic:
         try:
             self._initialize_services()
             self.translator = GoogleTranslator()
-            self._service_health['translator'] = True
-            logger.info("✅ Railway 비디오 업로더 초기화 완료")
-        except Exception as e:
-            logger.error(f"❌ 비디오 업로더 초기화 실패: {e}")
-            raise
-    
-    def _initialize_services(self):
-        """Railway 최적화된 서비스 초기화"""
-        with self._initialization_lock:
-            try:
-                # Firebase 초기화
-                self._initialize_firebase()
-                self.db = firestore.client()
-                self._service_health['firebase'] = True
-                
-                # Wasabi S3 초기화
-                self.s3_client = self._get_wasabi_client()
-                self.bucket_name = os.environ['WASABI_BUCKET_NAME']
-                self._service_health['wasabi'] = True
-                
-                # Railway 설정
-                self.app_base_url = os.environ.get('APP_BASE_URL', 'http://localhost:8080/watch/')
-                self.wasabi_cdn_url = os.environ.get('WASABI_CDN_URL', '')
-                
-                # Railway 최적화된 전송 설정
-                self.transfer_config = TransferConfig(
-                    multipart_threshold=1024 * 1024 * 16,  # 16MB
-                    multipart_chunksize=1024 * 1024 * 8,   # 8MB
-                    max_concurrency=2,  # Railway 리소스 제한
-                    use_threads=True
-                )
-                
-                logger.info("🔧 핵심 서비스 초기화 완료")
-                
-            except Exception as e:
-                logger.error(f"❌ 서비스 초기화 실패: {e}")
-                raise
-    
-    def _initialize_firebase(self):
-        """Railway 최적화된 Firebase 초기화"""
-        if firebase_admin._apps:
-            logger.debug("Firebase 이미 초기화됨")
-            return
-        
-        try:
-            # Railway 환경변수에서 Firebase 설정 로드
-            firebase_config = {
-                "type": "service_account",
-                "project_id": os.environ["FIREBASE_PROJECT_ID"],
-                "private_key_id": os.environ.get("FIREBASE_PRIVATE_KEY_ID", ""),
-                "private_key": os.environ["FIREBASE_PRIVATE_KEY"].replace('\\n', '\n'),
-                "client_email": os.environ["FIREBASE_CLIENT_EMAIL"],
-                "client_id": os.environ.get("FIREBASE_CLIENT_ID", ""),
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "client_x509_cert_url": os.environ.get("FIREBASE_CLIENT_X509_CERT_URL", "")
-            }
-            
-            cred = credentials.Certificate(firebase_config)
-            firebase_admin.initialize_app(cred)
-            logger.info("✅ Firebase 초기화 완료")
-            
-        except Exception as e:
-            logger.error(f"❌ Firebase 초기화 실패: {e}")
-            raise
-    
-    def _get_wasabi_client(self):
-        """Railway 최적화된 Wasabi S3 클라이언트"""
-        try:
-            return boto3.client(
-                's3',
-                aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],
-                aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],
-                region_name=os.environ.get('WASABI_REGION', 'us-east-1'),
-                endpoint_url=f"https://s3.{os.environ.get('WASABI_REGION', 'us-east-1')}.wasabisys.com",
-                config=boto3.session.Config(
-                    retries={'max_attempts': 2, 'mode': 'adaptive'},
-                    max_pool_connections=3,  # Railway 최적화
-                    region_name=os.environ.get('WASABI_REGION', 'us-east-1')
-                )
-            )
-        except Exception as e:
-            logger.error(f"❌ Wasabi 클라이언트 생성 실패: {e}")
-            raise
-    
-    def validate_file(self, file_path: str, file_type: str = 'video') -> bool:
-        """Railway 최적화된 파일 검증"""
-        try:
-            path = Path(file_path)
-            
-            if not path.exists() or not path.is_file():
-                logger.warning(f"파일이 존재하지 않음: {file_path}")
-                return False
-            
-            ext = path.suffix.lower()
-            
-            if file_type == 'video' and ext not in SUPPORTED_VIDEO_FORMATS:
-                logger.warning(f"지원하지 않는 비디오 형식: {ext}")
-                return False
-            
-            if file_type == 'image' and ext not in SUPPORTED_IMAGE_FORMATS:
-                logger.warning(f"지원하지 않는 이미지 형식: {ext}")
-                return False
-            
-            # Railway 파일 크기 검증
-            file_size = os.path.getsize(file_path)
-            if file_size == 0:
-                logger.warning(f"빈 파일: {file_path}")
-                return False
-            
-            if file_size > MAX_FILE_SIZE:
-                logger.warning(f"파일 크기 초과: {file_size} > {MAX_FILE_SIZE}")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"파일 검증 오류: {e}")
-            return False
-    
-    def extract_video_metadata(self, video_path: str) -> Dict[str, Any]:
-        """Railway 메모리 최적화된 비디오 메타데이터 추출"""
-        try:
-            # Railway 안전 모드로 메타데이터 추출
-            with VideoFileClip(video_path) as clip:
-                duration_sec = int(clip.duration) if clip.duration else 0
-                width = getattr(clip, 'w', 0)
-                height = getattr(clip, 'h', 0)
-                fps = round(getattr(clip, 'fps', 0), 2) if getattr(clip, 'fps', 0) else 0
-            
-            minutes = duration_sec // 60
-            seconds = duration_sec % 60
-            duration_str = f"{minutes}:{seconds:02d}"
-            
-            file_size = os.path.getsize(video_path)
-            
-            metadata = {
-                'duration_seconds': duration_sec,
-                'duration_string': duration_str,
-                'width': width,
-                'height': height,
-                'fps': fps,
-                'file_size': file_size,
-                'file_size_mb': round(file_size / 1024 / 1024, 2)
-            }
-            
-            logger.debug(f"비디오 메타데이터: {duration_str}, {width}x{height}, {file_size//1024//1024}MB")
-            return metadata
-            
-        except Exception as e:
-            logger.warning(f"비디오 메타데이터 추출 실패, 기본값 사용: {e}")
-            file_size = os.path.getsize(video_path) if os.path.exists(video_path) else 0
-            return {
-                'duration_seconds': 0,
-                'duration_string': '0:00',
-                'width': 0,
-                'height': 0,
-                'fps': 0,
-                'file_size': file_size,
-                'file_size_mb': round(file_size / 1024 / 1024, 2)
-            }
-    
-    def create_qr_code(self, data: str, output_path: str, title: str = "") -> bool:
-        """Railway 최적화된 QR 코드 생성"""
-        try:
-            # Railway 메모리 절약 설정
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_M,
-                box_size=4,  # Railway 메모리 절약
-                border=3,
-            )
-            qr.add_data(data)
-            qr.make(fit=True)
-            
-            # Railway 최적화된 이미지 생성
-            qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-            qr_size = 200  # Railway 메모리 절약
-            qr_img = qr_img.resize((qr_size, qr_size), Image.LANCZOS)
-            
-            # 제목 추가 (Railway 최적화)
-            if title:
-                text_height = 40
-                margin = 6
-                total_height = qr_size + text_height + margin
-                final_img = Image.new('RGB', (qr_size, total_height), 'white')
-                final_img.paste(qr_img, (0, 0))
-                
-                draw = ImageDraw.Draw(final_img)
-                
-                try:
-                    font = ImageFont.load_default()
-                except:
-                    font = ImageFont.load_default()
-                
-                # Railway 최적화된 텍스트 처리
-                if len(title.encode('utf-8')) > 40:  # 바이트 길이 기준
-                    title = title[:20] + "..."
-                
-                bbox = draw.textbbox((0, 0), title, font=font)
-                text_width = bbox[2] - bbox[0]
-                text_x = max(0, (qr_size - text_width) // 2)
-                text_y = qr_size + margin
-                
-                draw.text((text_x, text_y), title, font=font, fill='black')
-                final_img.save(output_path, quality=85, optimize=True)  # Railway 최적화
-            else:
-                qr_img.save(output_path, quality=85, optimize=True)
-            
-            logger.debug(f"QR 코드 생성 완료: {output_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"QR 코드 생성 실패: {e}")
-            return False
-    
-    # 나머지 메서드들은 이전과 동일하게 유지하되, 
-    # 간단한 stub으로 대체 (Railway 배포 테스트용)
-    
-    def upload_to_wasabi(self, local_path: str, s3_key: str, content_type: str = None,
-                        progress_callback: Callable = None) -> Optional[str]:
-        """Railway 테스트용 간단한 업로드"""
-        try:
-            # 실제 구현은 나중에 추가
-            logger.info(f"Railway 테스트: 파일 업로드 시뮬레이션 - {s3_key}")
-            return f"https://test-bucket.s3.amazonaws.com/{s3_key}"
-        except Exception as e:
-            logger.error(f"업로드 테스트 실패: {e}")
-            return None
-    
-    def upload_video(self, **kwargs) -> Dict[str, Any]:
-        """Railway 테스트용 간단한 업로드"""
-        try:
-            return {
-                'success': True,
-                'group_id': 'test-' + uuid.uuid4().hex[:8],
-                'message': 'Railway 테스트 업로드 성공'
-            }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-    
-    def get_existing_videos(self) -> List[Dict[str, Any]]:
-        """Railway 테스트용 비디오 목록"""
-        return [
-            {
-                'id': 'test-1',
-                'title': 'Railway 테스트 강의 1',
-                'languages': ['ko'],
-                'upload_date': '20240624'
-            }
-        ]
-
-# 로깅 설정 (Railway 최적화)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
-
-# 상수 정의 (Railway 최적화)
-SUPPORTED_VIDEO_FORMATS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv'}
-SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
-MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GB
-RAILWAY_MEMORY_LIMIT = 8 * 1024 * 1024 * 1024  # 8GB Railway 메모리 제한
-
-# Railway 최적화된 카테고리 구조
-CATEGORY_STRUCTURE = {
-    'main_categories': ['기계', '공구', '장비', '약품'],
-    'sub_categories': {
-        '기계': ['건설기계', '공작기계', '산업기계', '제조기계'],
-        '공구': ['수공구', '전동공구', '절삭공구', '측정공구'],
-        '장비': ['안전장비', '운송장비'],
-        '약품': ['의약품', '화공약품']
-    },
-    'leaf_categories': {
-        '건설기계': ['불도저', '크레인'],
-        '공작기계': ['CNC 선반', '연삭기'],
-        '산업기계': ['굴착기', '유압 프레스'],
-        '제조기계': ['사출 성형기', '열 성형기'],
-        '수공구': ['전동드릴', '플라이어', '해머'],
-        '전동공구': ['그라인더', '전동톱', '해머드릴'],
-        '절삭공구': ['가스 용접기', '커터'],
-        '측정공구': ['마이크로미터', '하이트 게이지'],
-        '안전장비': ['헬멧', '방진 마스크', '낙하 방지벨트', '안전모', '안전화', '보호안경', '귀마개', '보호장갑', '호흡 보호구'],
-        '운송장비': ['리프트 장비', '체인 블록', '호이스트'],
-        '의약품': ['인슐린', '항생제'],
-        '화공약품': ['황산', '염산']
-    }
-}
-
-class RailwayOptimizedTranslator:
-    """Railway 최적화된 Google Translate API 번역 시스템"""
-    
-    def __init__(self):
-        self.api_key = os.environ.get('GOOGLE_TRANSLATE_API_KEY')
-        self.base_url = "https://translation.googleapis.com/language/translate/v2"
-        
-        # Railway 최적화 설정
-        self.timeout = 15  # Railway 타임아웃 단축
-        self.max_retries = 2
-        self.request_delay = 0.5  # API 요청 간격
-        
-        # 지원 언어 코드 (Railway 메모리 최적화)
-        self.language_codes = {
-            'en': 'English',
-            'zh': '中文',
-            'vi': 'Tiếng Việt',
-            'th': 'ไทย',
-            'ja': '日本語'
-        }
-        
-        # 캐시 시스템 (Railway 메모리 절약)
-        self._translation_cache = {}
-        self._cache_lock = threading.Lock()
-        self._cache_max_size = 100  # Railway 메모리 제한
-        
-        logger.info("🌍 번역 서비스 초기화 완료")
-    
-    def translate_title(self, korean_title: str) -> Dict[str, str]:
-        """강의명 번역 (Railway 최적화된 캐싱 포함)"""
-        # 캐시 확인
-        cache_key = f"title_{hash(korean_title)}"
-        with self._cache_lock:
-            if cache_key in self._translation_cache:
-                logger.debug(f"캐시에서 번역 결과 반환: {korean_title[:20]}...")
-                return self._translation_cache[cache_key].copy()
-        
-        translations = {'ko': self._make_filename_safe(korean_title)}
-        
-        if not self.api_key:
-            logger.warning("Google Translate API 키가 없습니다. 대체 번역을 사용합니다.")
-            translations.update(self._fallback_translation(korean_title))
-        else:
-            # API 번역 시도
-            for lang_code in self.language_codes.keys():
-                try:
-                    translated = self._translate_with_retry(korean_title, 'ko', lang_code)
-                    if translated:
-                        translations[lang_code] = self._make_filename_safe(translated)
-                    else:
-                        translations[lang_code] = self._fallback_single_translation(korean_title, lang_code)
-                    
-                    # Railway API 제한 대응
-                    time.sleep(self.request_delay)
-                    
-                except Exception as e:
-                    logger.warning(f"{lang_code} 번역 실패, 대체 번역 사용: {e}")
-                    translations[lang_code] = self._fallback_single_translation(korean_title, lang_code)
-        
-        # 캐시에 저장 (Railway 메모리 관리)
-        with self._cache_lock:
-            if len(self._translation_cache) >= self._cache_max_size:
-                # 가장 오래된 항목 제거
-                oldest_key = next(iter(self._translation_cache))
-                del self._translation_cache[oldest_key]
-            
-            self._translation_cache[cache_key] = translations.copy()
-        
-        return translations
-    
-    def _translate_with_retry(self, text: str, source_lang: str, target_lang: str) -> Optional[str]:
-        """재시도 기능이 있는 번역 (Railway 최적화)"""
-        for attempt in range(self.max_retries):
-            try:
-                result = self._translate_text(text, source_lang, target_lang)
-                if result:
-                    return result
-            except requests.exceptions.Timeout:
-                logger.warning(f"번역 시도 {attempt + 1} 타임아웃")
-            except Exception as e:
-                logger.warning(f"번역 시도 {attempt + 1} 실패: {e}")
-            
-            if attempt < self.max_retries - 1:
-                time.sleep(min(2 ** attempt, 5))  # 지수 백오프
-        
-        return None
-    
-    def _translate_text(self, text: str, source_lang: str, target_lang: str) -> Optional[str]:
-        """Google Translate API 호출 (Railway 최적화)"""
-        try:
-            params = {
-                'key': self.api_key,
-                'q': text,
-                'source': source_lang,
-                'target': target_lang,
-                'format': 'text'
-            }
-            
-            response = requests.post(
-                self.base_url,
-                data=params,
-                timeout=self.timeout,
-                headers={
-                    'User-Agent': 'Railway-Video-Uploader/2.0',
-                    'Accept': 'application/json'
-                }
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            if 'data' in result and 'translations' in result['data']:
-                return result['data']['translations'][0]['translatedText']
-            
-            return None
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Google Translate API 요청 실패: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"번역 처리 중 오류: {e}")
-            return None
-    
-    def _make_filename_safe(self, text: str) -> str:
-        """Railway 최적화된 파일명 안전화"""
-        import html
-        text = html.unescape(text)
-        
-        # Railway 파일시스템 최적화
-        safe_text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', text)
-        safe_text = re.sub(r'\s+', '_', safe_text)
-        safe_text = re.sub(r'_+', '_', safe_text)
-        safe_text = safe_text.strip('_')
-        
-        # Railway 제한 적용
-        if len(safe_text.encode('utf-8')) > 200:  # 바이트 길이 제한
-            safe_text = safe_text[:50].rstrip('_')
-        
-        return safe_text or 'Unknown_Title'
-    
-    def _fallback_translation(self, korean_title: str) -> Dict[str, str]:
-        """Railway 최적화된 대체 번역 시스템"""
-        return {
-            lang_code: self._fallback_single_translation(korean_title, lang_code)
-            for lang_code in self.language_codes.keys()
-        }
-    
-    def _fallback_single_translation(self, korean_title: str, lang_code: str) -> str:
-        """Railway 최적화된 키워드 기반 번역"""
-        # Railway 메모리 최적화된 키워드 맵
-        keyword_maps = {
-            'en': {
-                '안전': 'Safety', '교육': 'Training', '기초': 'Basic', '용접': 'Welding',
-                '크레인': 'Crane', '조작': 'Operation', '장비': 'Equipment', '사용법': 'Usage',
-                '점검': 'Inspection', '유지보수': 'Maintenance', '응급처치': 'First_Aid',
-                '산업': 'Industrial', '건설': 'Construction', '기계': 'Machine', '공구': 'Tool'
-            },
-            'zh': {
-                '안전': '安全', '교육': '培训', '기초': '基础', '용접': '焊接',
-                '크레인': '起重机', '조작': '操作', '장비': '设备', '사용법': '使用方法'
-            },
-            'vi': {
-                '안전': 'An_Toan', '교육': 'Dao_Tao', '기초': 'Co_Ban', '용접': 'Han',
-                '크레인': 'Cau_Truc', '조작': 'Van_Hanh', '장비': 'Thiet_Bi'
-            },
-            'th': {
-                '안전': 'ปลอดภัย', '교육': 'การศึกษา', '기초': 'พื้นฐาน', '용접': 'เชื่อม'
-            },
-            'ja': {
-                '안전': '安全', '교육': '教育', '기초': '基礎', '용접': '溶接',
-                '크레인': 'クレーン', '조작': '操作', '장비': '設備'
-            }
-        }
-        
-        keyword_map = keyword_maps.get(lang_code, {})
-        result = korean_title
-        
-        # 키워드 번역 적용
-        for korean, translated in keyword_map.items():
-            result = result.replace(korean, translated)
-        
-        # 파일명 안전화
-        return self._make_filename_safe(result)
-
-# GoogleTranslator는 RailwayOptimizedTranslator의 별칭
-GoogleTranslator = RailwayOptimizedTranslator
-
-class RailwayVideoUploader:
-    """Railway 최적화된 비디오 업로더 메인 클래스"""
-    
-    def __init__(self):
-        self._initialization_lock = threading.Lock()
-        self._service_health = {
-            'firebase': False,
-            'wasabi': False,
-            'translator': False
-        }
-        
-        try:
-            self._initialize_services()
-            self.translator = RailwayOptimizedTranslator()
             self._service_health['translator'] = True
             logger.info("✅ Railway 비디오 업로더 초기화 완료")
         except Exception as e:
@@ -956,7 +464,7 @@ class RailwayVideoUploader:
     
     def upload_to_wasabi(self, local_path: str, s3_key: str, content_type: str = None,
                         progress_callback: Callable = None) -> Optional[str]:
-        """Railway 최적화된 Wasabi 업로드"""
+        """완전한 Wasabi 업로드 구현"""
         try:
             extra_args = {'ACL': 'public-read'}
             if content_type:
@@ -1010,14 +518,14 @@ class RailwayVideoUploader:
                     main_category: str, sub_category: str, leaf_category: str,
                     content_description: str, translated_filenames: Dict[str, str],
                     progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """Railway 최적화된 메인 비디오 업로드"""
+        """완전한 메인 비디오 업로드 구현"""
         
         with self._railway_memory_context():
             try:
                 def update_progress(value: int, message: str):
                     if progress_callback:
                         progress_callback(value, message)
-                    logger.debug(f"진행률 {value}%: {message}")
+                    logger.info(f"진행률 {value}%: {message}")
                 
                 update_progress(5, "🔍 파일 검증 중...")
                 
@@ -1217,14 +725,14 @@ class RailwayVideoUploader:
     
     def upload_language_video(self, video_id: str, language_code: str, video_path: str,
                              progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
-        """Railway 최적화된 언어별 영상 업로드"""
+        """완전한 언어별 영상 업로드 구현"""
         
         with self._railway_memory_context():
             try:
                 def update_progress(value: int, message: str):
                     if progress_callback:
                         progress_callback(value, message)
-                    logger.debug(f"언어별 업로드 {value}%: {message}")
+                    logger.info(f"언어별 업로드 {value}%: {message}")
                 
                 update_progress(10, "📋 기존 영상 정보 확인 중...")
                 
@@ -1348,7 +856,7 @@ class RailwayVideoUploader:
                 }
     
     def get_existing_videos(self) -> List[Dict[str, Any]]:
-        """Railway 최적화된 기존 영상 목록 조회"""
+        """완전한 기존 영상 목록 조회 구현"""
         try:
             # Railway 메모리 제한으로 50개만 조회
             docs = self.db.collection('uploads').order_by(
@@ -1385,6 +893,7 @@ class RailwayVideoUploader:
                     # Railway 메모리 최적화된 비디오 정보
                     video_info = {
                         'id': doc.id,
+                        'group_id': doc.id,  # API 호환성
                         'title': data.get('group_name', 'Unknown'),
                         'category': f"{data.get('main_category', '')} > {data.get('sub_category', '')} > {data.get('sub_sub_category', '')}",
                         'main_category': data.get('main_category', ''),
@@ -1411,7 +920,7 @@ class RailwayVideoUploader:
             return []
     
     def get_upload_status(self, group_id: str) -> Dict[str, Any]:
-        """Railway 최적화된 업로드 상태 확인"""
+        """완전한 업로드 상태 확인 구현"""
         try:
             doc_ref = self.db.collection('uploads').document(group_id)
             doc = doc_ref.get()
@@ -1423,19 +932,22 @@ class RailwayVideoUploader:
             
             # Railway 최적화된 언어별 영상 조회
             language_videos = {}
+            supported_languages = []
             try:
                 lang_docs = doc_ref.collection('language_videos').get()
                 for lang_doc in lang_docs:
-                    language_videos[lang_doc.id] = lang_doc.to_dict()
+                    lang_data = lang_doc.to_dict()
+                    language_videos[lang_doc.id] = lang_data
+                    supported_languages.append(lang_doc.id)
             except:
-                pass
+                supported_languages = ['ko']  # 기본값
             
             return {
                 'success': True,
                 'group_id': group_id,
                 'group_name': data.get('group_name', ''),
                 'upload_date': data.get('upload_date', ''),
-                'supported_languages': list(language_videos.keys()),
+                'supported_languages': supported_languages,
                 'language_videos': language_videos,
                 'qr_link': data.get('qr_link', ''),
                 'qr_url': data.get('qr_url', ''),
@@ -1513,6 +1025,3 @@ class RailwayVideoUploader:
                     logger.debug(f"임시 파일 삭제: {file_path}")
             except Exception as e:
                 logger.warning(f"임시 파일 삭제 실패 {file_path}: {e}")
-
-# VideoUploaderLogic는 RailwayVideoUploader의 별칭
-VideoUploaderLogic = RailwayVideoUploader
