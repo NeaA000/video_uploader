@@ -141,7 +141,7 @@ class BranchAPI:
                 "channel": "training_platform",
                 "feature": "video_sharing",
                 "campaign": "video_watch",
-                "type": 2,  # Marketing link
+                "type": 0,  #  2 → 0으로 변경 (Marketing link → Default link)
                 "data": {
                     "$desktop_url": f"https://{self.branch_domain}/watch/{video_id}",
                     "$ios_url": f"https://{self.branch_domain}/watch/{video_id}",
