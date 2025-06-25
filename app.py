@@ -123,6 +123,7 @@ class BranchAPI:
     def __init__(self):
         self.branch_key = BRANCH_KEY
         self.branch_secret = BRANCH_SECRET
+        self.branch_app_id = BRANCH_APP_ID
         self.base_url = "https://api2.branch.io/v1"
         self.custom_domain = CUSTOM_DOMAIN
         self.branch_domain = BRANCH_DOMAIN
@@ -130,8 +131,9 @@ class BranchAPI:
     def create_deep_link(self, video_id: str, title: str = "", description: str = "") -> dict:
         """Branch.io 딥링크 생성"""
         try:
-            # 커스텀 도메인이 있으면 사용
-            base_domain = self.custom_domain if self.custom_domain else self.branch_domain
+            # Branch.io 키 확인
+            if not self.branch_key:
+                logger.warning("Branch.io 키가 설정되지 않음")
             
             # Branch.io 링크 데이터
             link_data = {
@@ -139,16 +141,24 @@ class BranchAPI:
                 "channel": "training_platform",
                 "feature": "video_sharing",
                 "campaign": "video_watch",
+                "type": 2,  # Marketing link
                 "data": {
-                    "$desktop_url": f"https://{base_domain}/watch/{video_id}",
-                    "$ios_url": f"https://{base_domain}/watch/{video_id}",
-                    "$android_url": f"https://{base_domain}/watch/{video_id}",
+                    "$desktop_url": f"https://{self.branch_domain}/watch/{video_id}",
+                    "$ios_url": f"https://{self.branch_domain}/watch/{video_id}",
+                    "$android_url": f"https://{self.branch_domain}/watch/{video_id}",
                     "$og_title": title or "Training Video",
                     "$og_description": description or "Watch training video in your preferred language",
-                    "$og_image_url": f"https://{RAILWAY_STATIC_URL or base_domain}/thumbnail/default.png",
-                    "$canonical_url": f"https://{base_domain}/watch/{video_id}",
+                    "$og_image_url": f"https://{RAILWAY_STATIC_URL or self.branch_domain}/thumbnail/default.png",
+                    "$canonical_url": f"https://{self.branch_domain}/watch/{video_id}",
+                    "$fallback_url": f"https://{self.branch_domain}/watch/{video_id}",
                     "video_id": video_id,
+                    "~campaign": "education_video",
+                    "~feature": "sharing",
+                    "~stage": "production",
+                    "~tags": ["education", "safety", video_id],
+                    "+match_duration": 7200,
                     "custom_data": {
+                        "video_id": video_id,
                         "type": "training_video",
                         "platform": "multi_language",
                         "created_at": datetime.now().isoformat()
@@ -159,40 +169,73 @@ class BranchAPI:
             # 커스텀 도메인 사용 시 alias 설정
             if self.custom_domain:
                 link_data["alias"] = f"video-{video_id}"
-                link_data["type"] = 2  # Marketing link
             
-            # Branch.io API 호출
-            response = requests.post(
-                f"{self.base_url}/url",
-                json=link_data,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "url": result.get("url", f"https://{base_domain}/watch/{video_id}"),
-                    "custom_domain_url": f"https://{self.custom_domain}/watch/{video_id}" if self.custom_domain else None
-                }
+            # Branch.io API가 실패하더라도 기본 링크는 항상 반환
+            # Railway 도메인을 우선 사용
+            if RAILWAY_STATIC_URL:
+                base_domain = RAILWAY_STATIC_URL.replace('https://', '').replace('http://', '').rstrip('/')
             else:
-                logger.error(f"Branch.io API 오류: {response.status_code} - {response.text}")
-                # 폴백 URL 반환
-                return {
-                    "success": False,
-                    "url": f"https://{base_domain}/watch/{video_id}",
-                    "error": "Branch.io API 오류"
+                base_domain = self.branch_domain
+            fallback_url = f"https://{base_domain}/watch/{video_id}"
+            
+            if self.branch_key:
+                # API 요청 시도
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
                 }
                 
-        except Exception as e:
-            logger.error(f"Branch.io 딥링크 생성 실패: {e}")
-            # 폴백 URL 반환
-            base_domain = self.custom_domain if self.custom_domain else self.branch_domain
+                logger.info(f"Branch.io API 요청 시도: video_id={video_id}")
+                
+                try:
+                    response = requests.post(
+                        f"{self.base_url}/url",
+                        json=link_data,
+                        headers=headers,
+                        timeout=5  # 타임아웃 단축
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        branch_url = result.get('url', '')
+                        logger.info(f"Branch.io 링크 생성 성공: {branch_url}")
+                        
+                        # Branch.io 성공 시에도 폴백 URL을 함께 제공
+                        return {
+                            "success": True,
+                            "url": branch_url if branch_url else fallback_url,
+                            "short_url": branch_url,
+                            "fallback_url": fallback_url,
+                            "custom_domain_url": f"https://{self.custom_domain}/watch/{video_id}" if self.custom_domain else None
+                        }
+                    else:
+                        logger.warning(f"Branch.io API 응답 오류: {response.status_code} - {response.text}")
+                except Exception as api_error:
+                    logger.warning(f"Branch.io API 요청 실패: {api_error}")
+            
+            # Branch.io 실패 또는 키 없음 - 기본 URL 사용
+            logger.info(f"기본 URL 사용: {fallback_url}")
             return {
-                "success": False,
-                "url": f"https://{base_domain}/watch/{video_id}",
-                "error": str(e)
+                "success": True,  # 폴백이어도 성공으로 처리
+                "url": fallback_url,
+                "short_url": fallback_url,
+                "fallback_url": fallback_url,
+                "custom_domain_url": f"https://{self.custom_domain}/watch/{video_id}" if self.custom_domain else None,
+                "branch_enabled": False
+            }
+                
+        except Exception as e:
+            logger.error(f"딥링크 생성 중 오류: {e}")
+            # 오류가 나도 기본 URL은 반환
+            base_domain = self.branch_domain
+            fallback_url = f"https://{base_domain}/watch/{video_id}"
+            
+            return {
+                "success": True,  # URL은 생성했으므로 성공
+                "url": fallback_url,
+                "fallback_url": fallback_url,
+                "error": str(e),
+                "branch_enabled": False
             }
     
     def update_link_metadata(self, video_id: str, metadata: dict) -> bool:
@@ -893,6 +936,36 @@ def watch_video(video_id):
             return render_template('error.html', 
                                  error_code=500, 
                                  error_message=f"영상 로드 중 오류: {str(e)}"), 500
+
+@app.route('/player/<video_id>')
+def player(video_id):
+    """웹 비디오 플레이어"""
+    try:
+        # Firestore에서 비디오 정보 조회
+        uploader, _ = safe_get_service_instances()
+        if not uploader:
+            return render_template('error.html', 
+                                 error_code=503,
+                                 message="서비스를 사용할 수 없습니다"), 503
+        
+        # 비디오 정보 가져오기
+        video_info = uploader.get_video_info(video_id)
+        
+        if not video_info['success']:
+            return render_template('error.html', 
+                                 error_code=404,
+                                 message="영상을 찾을 수 없습니다"), 404
+        
+        # 플레이어 페이지 렌더링
+        return render_template('player.html', 
+                             video_info=video_info,
+                             video_id=video_id)
+        
+    except Exception as e:
+        logger.error(f"플레이어 오류: {e}")
+        return render_template('error.html', 
+                             error_code=500,
+                             message="영상을 재생할 수 없습니다"), 500
 
 @app.route('/api/videos/<video_id>/languages', methods=['GET'])
 def get_video_languages(video_id):
