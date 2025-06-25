@@ -1136,6 +1136,7 @@
     let cachedVideos = [];
     let translatedFilenames = {};
     let currentAlternativeLanguage = '';
+    const koreanTitle = '';  // 원본 제목 저장용
     
     // JSON 파싱
     const subs = JSON.parse(document.getElementById('subs-data').textContent);
@@ -1209,8 +1210,8 @@
         case 'video':
           targetElement = document.getElementById('selectedVideo');
           uploadElement = document.getElementById('videoUpload');
-          if (file.size > 500 * 1024 * 1024) {
-            targetElement.textContent = '❌ 파일 크기가 500MB를 초과합니다';
+          if (file.size > 5 * 1024 * 1024 * 1024) {
+            targetElement.textContent = '❌ 파일 크기가 5GB를 초과합니다';
             targetElement.style.color = '#dc3545';
             return;
           }
@@ -1340,8 +1341,8 @@
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text: koreanTitle,
-            target_languages: ['en', 'zh', 'vi', 'th', 'ja']
+            text: koreanTitle
+            // target_languages 제거 - 백엔드에서 모든 언어로 자동 번역
           })
         });
         
@@ -1349,10 +1350,14 @@
           throw new Error('번역 서비스에 연결할 수 없습니다.');
         }
         
-        const translations = await response.json();
+        const result = await response.json();
         
-        // 번역 결과 표시
-        showTranslationResults(translations);
+        if (result.success && result.translations) {
+          // 번역 결과 표시
+          showTranslationResults(result.translations);
+        } else {
+          throw new Error(result.error || '번역 실패');
+        }
         
       } catch (error) {
         console.error('번역 오류:', error);
@@ -1416,6 +1421,8 @@
         th: { flag: '🇹🇭', name: 'ไทย' },
         ja: { flag: '🇯🇵', name: '日本語' }
       };
+      
+      const koreanTitle = document.getElementById('originalTitleText').textContent;
       
       const itemsHtml = Object.entries(languages).map(([langCode, langInfo]) => {
         const translation = translations[langCode] || koreanTitle;
@@ -1781,22 +1788,6 @@
         closeAlternativesModal();
       }
     });
-
-    // Google Translate API 모의 응답 (실제 환경에서는 백엔드에서 처리)
-    window.mockTranslateAPI = function(text, targetLanguages) {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          const mockTranslations = {
-            en: text.replace(/안전/g, 'Safety').replace(/교육/g, 'Training').replace(/기초/g, 'Basic'),
-            zh: text.replace(/안전/g, '安全').replace(/교육/g, '培训').replace(/기초/g, '基础'),
-            vi: text.replace(/안전/g, 'An_Toan').replace(/교육/g, 'Dao_Tao').replace(/기초/g, 'Co_Ban'),
-            th: text.replace(/안전/g, 'ความปลอดภัย').replace(/교육/g, 'การศึกษา'),
-            ja: text.replace(/안전/g, '安全').replace(/교육/g, '教育').replace(/기초/g, '基礎')
-          };
-          resolve(mockTranslations);
-        }, 2000);
-      });
-    };
 
     console.log('🌍 다국어 강의 업로드 시스템 v3.0 초기화 완료');
     console.log('🎯 주요 기능: 실시간 번역, 파일명 자동 변환, 언어별 영상 관리');
