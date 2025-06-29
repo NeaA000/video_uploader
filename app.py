@@ -1,5 +1,6 @@
-# app.py - 개선된 하이브리드 프록시 Flask 백엔드 (Branch.io 통합)
+# app.py - 개선된 하이브리드 프록시 Flask 백엔드 (Branch.io 통합 + CORS 수정)
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, Response, send_file
+from flask_cors import CORS, cross_origin
 import os
 import tempfile
 import json
@@ -53,6 +54,48 @@ except ImportError as e:
 # Flask 앱 초기화 (Railway 최적화)
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-railway-2024')
+
+# CORS 설정 추가 - 모든 도메인 허용 (개발 환경)
+CORS(app, resources={
+    r"/video/*": {
+        "origins": "*",
+        "methods": ["GET", "HEAD", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Range"],
+        "expose_headers": ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"],
+        "supports_credentials": False,
+        "max_age": 3600
+    },
+    r"/thumbnail/*": {
+        "origins": "*",
+        "methods": ["GET", "HEAD", "OPTIONS"],
+        "allow_headers": ["Content-Type"],
+        "expose_headers": ["Content-Length", "Content-Type"],
+        "supports_credentials": False,
+        "max_age": 86400
+    },
+    r"/qr/*": {
+        "origins": "*",
+        "methods": ["GET", "HEAD", "OPTIONS"],
+        "allow_headers": ["Content-Type"],
+        "expose_headers": ["Content-Length", "Content-Type"],
+        "supports_credentials": False,
+        "max_age": 86400
+    },
+    r"/watch/*": {
+        "origins": "*",
+        "methods": ["GET", "HEAD", "OPTIONS"],
+        "allow_headers": ["Content-Type"],
+        "supports_credentials": False,
+        "max_age": 3600
+    },
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"],
+        "supports_credentials": False,
+        "max_age": 3600
+    }
+})
 
 # Branch.io 설정
 BRANCH_KEY = os.environ.get('BRANCH_KEY', '')
@@ -364,7 +407,8 @@ def health_check():
             'branch_configured': bool(BRANCH_KEY),
             'custom_domain': CUSTOM_DOMAIN or 'not_configured',
             'proxy_enabled': True,
-            'hybrid_mode': True
+            'hybrid_mode': True,
+            'cors_enabled': True  # CORS 활성화 표시
         }
         
         return jsonify(health_status), 200
@@ -377,10 +421,11 @@ def health_check():
             'timestamp': datetime.now().isoformat()
         }), 500
 
-# =================== Railway 프록시 엔드포인트들 (개선) ===================
+# =================== Railway 프록시 엔드포인트들 (CORS 개선) ===================
 
 @app.route('/qr/<path:s3_key>')
 @cache_control(max_age=86400)  # 1일 캐시
+@cross_origin()
 def proxy_qr_code(s3_key):
     """QR 코드 파일 프록시"""
     try:
@@ -403,7 +448,8 @@ def proxy_qr_code(s3_key):
                     mimetype=cached_item['content_type'],
                     headers={
                         'Content-Length': str(len(cached_item['data'])),
-                        'ETag': cached_item.get('etag', '')
+                        'ETag': cached_item.get('etag', ''),
+                        'Access-Control-Allow-Origin': '*'
                     }
                 )
         
@@ -432,7 +478,8 @@ def proxy_qr_code(s3_key):
             mimetype=content_type,
             headers={
                 'Content-Length': str(len(file_data)),
-                'ETag': etag
+                'ETag': etag,
+                'Access-Control-Allow-Origin': '*'
             }
         )
         
@@ -442,6 +489,7 @@ def proxy_qr_code(s3_key):
 
 @app.route('/thumbnail/<path:s3_key>')
 @cache_control(max_age=86400)  # 1일 캐시
+@cross_origin()
 def proxy_thumbnail(s3_key):
     """썸네일 이미지 파일 프록시"""
     try:
@@ -464,7 +512,8 @@ def proxy_thumbnail(s3_key):
                     mimetype=cached_item['content_type'],
                     headers={
                         'Content-Length': str(len(cached_item['data'])),
-                        'ETag': cached_item.get('etag', '')
+                        'ETag': cached_item.get('etag', ''),
+                        'Access-Control-Allow-Origin': '*'
                     }
                 )
         
@@ -493,7 +542,8 @@ def proxy_thumbnail(s3_key):
             mimetype=content_type,
             headers={
                 'Content-Length': str(len(file_data)),
-                'ETag': etag
+                'ETag': etag,
+                'Access-Control-Allow-Origin': '*'
             }
         )
         
@@ -502,8 +552,9 @@ def proxy_thumbnail(s3_key):
         return jsonify({'error': '썸네일 로드 실패'}), 500
 
 @app.route('/video/<path:s3_key>')
+@cross_origin()
 def proxy_video_stream(s3_key):
-    """개선된 비디오 스트리밍 프록시"""
+    """개선된 비디오 스트리밍 프록시 (CORS 지원)"""
     try:
         logger.debug(f"동영상 프록시 요청: {s3_key}")
         
@@ -568,7 +619,11 @@ def proxy_video_stream(s3_key):
                 'Content-Range': f'bytes {byte_start}-{byte_end}/{content_length}',
                 'Content-Length': str(byte_end - byte_start + 1),
                 'ETag': etag,
-                'Cache-Control': 'private, max-age=3600'
+                'Cache-Control': 'private, max-age=3600',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Range',
+                'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
             }
             
             return Response(generate(), status=206, headers=headers)
@@ -596,7 +651,11 @@ def proxy_video_stream(s3_key):
                 'Content-Length': str(content_length),
                 'Accept-Ranges': 'bytes',
                 'ETag': etag,
-                'Cache-Control': 'private, max-age=3600'
+                'Cache-Control': 'private, max-age=3600',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Range',
+                'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
             }
             
             return Response(generate(), headers=headers)
@@ -605,8 +664,23 @@ def proxy_video_stream(s3_key):
         logger.error(f"❌ 비디오 프록시 실패: {s3_key} - {e}")
         return jsonify({'error': '동영상 로드 실패'}), 500
 
+# OPTIONS 요청 처리 (CORS preflight)
+@app.route('/video/<path:s3_key>', methods=['OPTIONS'])
+@app.route('/thumbnail/<path:s3_key>', methods=['OPTIONS'])
+@app.route('/qr/<path:s3_key>', methods=['OPTIONS'])
+def handle_options(s3_key):
+    """CORS preflight 요청 처리"""
+    response = Response()
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Range'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
+
 @app.route('/file/<path:s3_key>')
 @cache_control(max_age=3600)
+@cross_origin()
 def proxy_generic_file(s3_key):
     """일반 파일 프록시 (필요시 확장 가능)"""
     try:
@@ -644,7 +718,8 @@ def proxy_generic_file(s3_key):
             mimetype=content_type,
             headers={
                 'Content-Length': str(content_length),
-                'Content-Disposition': f'inline; filename="{os.path.basename(s3_key)}"'
+                'Content-Disposition': f'inline; filename="{os.path.basename(s3_key)}"',
+                'Access-Control-Allow-Origin': '*'
             }
         )
         
@@ -789,6 +864,7 @@ def upload_video():
         return redirect(url_for('index'))
 
 @app.route('/watch/<video_id>')
+@cross_origin()
 def watch_video(video_id):
     """하이브리드 영상 시청 페이지 (Railway 프록시 URL 사용)"""
     try:
@@ -968,6 +1044,7 @@ def player(video_id):
                              message="영상을 재생할 수 없습니다"), 500
 
 @app.route('/api/videos/<video_id>/languages', methods=['GET'])
+@cross_origin()
 def get_video_languages(video_id):
     """특정 영상의 사용 가능한 언어 목록 조회 (Railway 프록시 URL 포함)"""
     try:
@@ -1028,6 +1105,7 @@ def get_video_languages(video_id):
         return jsonify({'error': '언어 목록을 가져올 수 없습니다', 'details': str(e)}), 500
 
 @app.route('/api/translate', methods=['POST'])
+@cross_origin()
 def translate_text():
     """완전한 번역 API"""
     try:
@@ -1061,6 +1139,7 @@ def translate_text():
         }), 500
 
 @app.route('/api/admin/videos', methods=['GET'])
+@cross_origin()
 def get_existing_videos():
     """기존 영상 목록 API (Railway 프록시 URL 포함)"""
     try:
@@ -1094,6 +1173,7 @@ def get_existing_videos():
         }), 500
 
 @app.route('/api/admin/upload_language_video', methods=['POST'])
+@cross_origin()
 def upload_language_video():
     """언어별 영상 업로드 API (하이브리드 방식)"""
     try:
@@ -1178,6 +1258,7 @@ def upload_language_video():
 
 # Branch.io 관련 엔드포인트
 @app.route('/api/branch/create_link', methods=['POST'])
+@cross_origin()
 def create_branch_link():
     """Branch.io 링크 생성 API"""
     try:
@@ -1294,10 +1375,11 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('DEBUG', 'false').lower() == 'true'
     
-    logger.info(f"🚀 Railway 하이브리드 서버 시작")
+    logger.info(f"🚀 Railway 하이브리드 서버 시작 (CORS 활성화)")
     logger.info(f"🔗 Branch.io 도메인: {BRANCH_DOMAIN}")
     logger.info(f"🌐 커스텀 도메인: {CUSTOM_DOMAIN or '미설정'}")
     logger.info(f"🔄 프록시 엔드포인트: /qr/, /thumbnail/, /video/, /file/")
     logger.info(f"💾 Wasabi 저장소 + Railway 프록시 = 영구 URL 보장")
+    logger.info(f"✅ CORS 설정: 모든 도메인 허용 (개발 환경)")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
