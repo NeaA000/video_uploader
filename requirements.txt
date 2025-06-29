@@ -42,3 +42,4 @@ googletrans==4.0.0rc1
 
 Pillow==10.0.1
 qrcode[pil]==7.4.2
+flask-cors==4.0.0
