@@ -425,7 +425,6 @@ def health_check():
 
 @app.route('/qr/<path:s3_key>')
 @cache_control(max_age=86400)  # 1일 캐시
-@cross_origin()
 def proxy_qr_code(s3_key):
     """QR 코드 파일 프록시 (CORS 헤더 중복 제거)"""
     try:
@@ -489,7 +488,6 @@ def proxy_qr_code(s3_key):
 
 @app.route('/thumbnail/<path:s3_key>')
 @cache_control(max_age=86400)  # 1일 캐시
-@cross_origin()
 def proxy_thumbnail(s3_key):
     """썸네일 이미지 파일 프록시 (CORS 헤더 중복 제거)"""
     try:
@@ -552,7 +550,6 @@ def proxy_thumbnail(s3_key):
         return jsonify({'error': '썸네일 로드 실패'}), 500
 
 @app.route('/video/<path:s3_key>')
-@cross_origin()
 def proxy_video_stream(s3_key):
     """개선된 비디오 스트리밍 프록시 (CORS 헤더 중복 제거)"""
     try:
@@ -663,7 +660,6 @@ def proxy_video_stream(s3_key):
 
 @app.route('/file/<path:s3_key>')
 @cache_control(max_age=3600)
-@cross_origin()
 def proxy_generic_file(s3_key):
     """일반 파일 프록시 (CORS 헤더 중복 제거)"""
     try:
@@ -847,7 +843,6 @@ def upload_video():
         return redirect(url_for('index'))
 
 @app.route('/watch/<video_id>')
-@cross_origin()
 def watch_video(video_id):
     """하이브리드 영상 시청 페이지 (Railway 프록시 URL 사용)"""
     try:
@@ -1027,7 +1022,6 @@ def player(video_id):
                              message="영상을 재생할 수 없습니다"), 500
 
 @app.route('/api/videos/<video_id>/languages', methods=['GET'])
-@cross_origin()
 def get_video_languages(video_id):
     """특정 영상의 사용 가능한 언어 목록 조회 (Railway 프록시 URL 포함)"""
     try:
@@ -1088,7 +1082,6 @@ def get_video_languages(video_id):
         return jsonify({'error': '언어 목록을 가져올 수 없습니다', 'details': str(e)}), 500
 
 @app.route('/api/translate', methods=['POST'])
-@cross_origin()
 def translate_text():
     """완전한 번역 API"""
     try:
@@ -1122,7 +1115,6 @@ def translate_text():
         }), 500
 
 @app.route('/api/admin/videos', methods=['GET'])
-@cross_origin()
 def get_existing_videos():
     """기존 영상 목록 API (Railway 프록시 URL 포함)"""
     try:
@@ -1156,7 +1148,6 @@ def get_existing_videos():
         }), 500
 
 @app.route('/api/admin/upload_language_video', methods=['POST'])
-@cross_origin()
 def upload_language_video():
     """언어별 영상 업로드 API (하이브리드 방식)"""
     try:
@@ -1241,7 +1232,6 @@ def upload_language_video():
 
 # Branch.io 관련 엔드포인트
 @app.route('/api/branch/create_link', methods=['POST'])
-@cross_origin()
 def create_branch_link():
     """Branch.io 링크 생성 API"""
     try:
