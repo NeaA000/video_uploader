@@ -1,6 +1,5 @@
 # app.py - 개선된 하이브리드 프록시 Flask 백엔드 (Branch.io 통합 + CORS 수정)
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, Response, send_file
-from flask_cors import CORS, cross_origin
 import os
 import tempfile
 import json
@@ -55,47 +54,26 @@ except ImportError as e:
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-railway-2024')
 
-# CORS 설정 추가 - 모든 도메인 허용 (개발 환경)
-CORS(app, resources={
-    r"/video/*": {
-        "origins": "*",
-        "methods": ["GET", "HEAD", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Range"],
-        "expose_headers": ["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"],
-        "supports_credentials": False,
-        "max_age": 3600
-    },
-    r"/thumbnail/*": {
-        "origins": "*",
-        "methods": ["GET", "HEAD", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "expose_headers": ["Content-Length", "Content-Type"],
-        "supports_credentials": False,
-        "max_age": 86400
-    },
-    r"/qr/*": {
-        "origins": "*",
-        "methods": ["GET", "HEAD", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "expose_headers": ["Content-Length", "Content-Type"],
-        "supports_credentials": False,
-        "max_age": 86400
-    },
-    r"/watch/*": {
-        "origins": "*",
-        "methods": ["GET", "HEAD", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "supports_credentials": False,
-        "max_age": 3600
-    },
-    r"/api/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "supports_credentials": False,
-        "max_age": 3600
-    }
-})
+# CORS를 수동으로 처리하는 after_request 핸들러
+@app.after_request
+def after_request(response):
+    """모든 응답에 CORS 헤더 추가 (중복 방지)"""
+    # 이미 CORS 헤더가 있는지 확인
+    if 'Access-Control-Allow-Origin' not in response.headers:
+        response.headers['Access-Control-Allow-Origin'] = '*'
+    
+    # Preflight 요청을 위한 헤더
+    if request.method == 'OPTIONS':
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Range'
+        response.headers['Access-Control-Max-Age'] = '3600'
+    
+    # 비디오 스트리밍을 위한 추가 헤더
+    if request.path.startswith('/video/'):
+        if 'Access-Control-Expose-Headers' not in response.headers:
+            response.headers['Access-Control-Expose-Headers'] = 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
+    
+    return response
 
 # Branch.io 설정
 BRANCH_KEY = os.environ.get('BRANCH_KEY', '')
@@ -408,7 +386,8 @@ def health_check():
             'custom_domain': CUSTOM_DOMAIN or 'not_configured',
             'proxy_enabled': True,
             'hybrid_mode': True,
-            'cors_enabled': True  # CORS 활성화 표시
+            'cors_enabled': True,  # CORS 활성화 표시
+            'cors_method': 'manual'  # 수동 CORS 처리
         }
         
         return jsonify(health_status), 200
@@ -1353,6 +1332,6 @@ if __name__ == '__main__':
     logger.info(f"🌐 커스텀 도메인: {CUSTOM_DOMAIN or '미설정'}")
     logger.info(f"🔄 프록시 엔드포인트: /qr/, /thumbnail/, /video/, /file/")
     logger.info(f"💾 Wasabi 저장소 + Railway 프록시 = 영구 URL 보장")
-    logger.info(f"✅ CORS 설정: Flask-CORS로 중앙 관리 (중복 헤더 제거)")
+    logger.info(f"✅ CORS 설정: 수동 처리로 중복 방지")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
