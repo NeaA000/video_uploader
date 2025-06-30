@@ -427,7 +427,7 @@ def health_check():
 @cache_control(max_age=86400)  # 1일 캐시
 @cross_origin()
 def proxy_qr_code(s3_key):
-    """QR 코드 파일 프록시"""
+    """QR 코드 파일 프록시 (CORS 헤더 중복 제거)"""
     try:
         logger.debug(f"QR 코드 프록시 요청: {s3_key}")
         
@@ -448,8 +448,8 @@ def proxy_qr_code(s3_key):
                     mimetype=cached_item['content_type'],
                     headers={
                         'Content-Length': str(len(cached_item['data'])),
-                        'ETag': cached_item.get('etag', ''),
-                        'Access-Control-Allow-Origin': '*'
+                        'ETag': cached_item.get('etag', '')
+                        # Access-Control-Allow-Origin 헤더 제거 (CORS 데코레이터가 처리)
                     }
                 )
         
@@ -478,8 +478,8 @@ def proxy_qr_code(s3_key):
             mimetype=content_type,
             headers={
                 'Content-Length': str(len(file_data)),
-                'ETag': etag,
-                'Access-Control-Allow-Origin': '*'
+                'ETag': etag
+                # Access-Control-Allow-Origin 헤더 제거
             }
         )
         
@@ -491,7 +491,7 @@ def proxy_qr_code(s3_key):
 @cache_control(max_age=86400)  # 1일 캐시
 @cross_origin()
 def proxy_thumbnail(s3_key):
-    """썸네일 이미지 파일 프록시"""
+    """썸네일 이미지 파일 프록시 (CORS 헤더 중복 제거)"""
     try:
         logger.debug(f"썸네일 프록시 요청: {s3_key}")
         
@@ -512,8 +512,8 @@ def proxy_thumbnail(s3_key):
                     mimetype=cached_item['content_type'],
                     headers={
                         'Content-Length': str(len(cached_item['data'])),
-                        'ETag': cached_item.get('etag', ''),
-                        'Access-Control-Allow-Origin': '*'
+                        'ETag': cached_item.get('etag', '')
+                        # Access-Control-Allow-Origin 헤더 제거
                     }
                 )
         
@@ -542,8 +542,8 @@ def proxy_thumbnail(s3_key):
             mimetype=content_type,
             headers={
                 'Content-Length': str(len(file_data)),
-                'ETag': etag,
-                'Access-Control-Allow-Origin': '*'
+                'ETag': etag
+                # Access-Control-Allow-Origin 헤더 제거
             }
         )
         
@@ -554,7 +554,7 @@ def proxy_thumbnail(s3_key):
 @app.route('/video/<path:s3_key>')
 @cross_origin()
 def proxy_video_stream(s3_key):
-    """개선된 비디오 스트리밍 프록시 (CORS 지원)"""
+    """개선된 비디오 스트리밍 프록시 (CORS 헤더 중복 제거)"""
     try:
         logger.debug(f"동영상 프록시 요청: {s3_key}")
         
@@ -612,18 +612,15 @@ def proxy_video_stream(s3_key):
                     logger.error(f"스트리밍 오류: {e}")
                     return
             
-            # 206 Partial Content 응답
+            # 206 Partial Content 응답 (CORS 헤더 제거)
             headers = {
                 'Content-Type': content_type,
                 'Accept-Ranges': 'bytes',
                 'Content-Range': f'bytes {byte_start}-{byte_end}/{content_length}',
                 'Content-Length': str(byte_end - byte_start + 1),
                 'ETag': etag,
-                'Cache-Control': 'private, max-age=3600',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type, Range',
-                'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
+                'Cache-Control': 'private, max-age=3600'
+                # CORS 관련 헤더 모두 제거 (Flask-CORS가 처리)
             }
             
             return Response(generate(), status=206, headers=headers)
@@ -651,11 +648,8 @@ def proxy_video_stream(s3_key):
                 'Content-Length': str(content_length),
                 'Accept-Ranges': 'bytes',
                 'ETag': etag,
-                'Cache-Control': 'private, max-age=3600',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type, Range',
-                'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
+                'Cache-Control': 'private, max-age=3600'
+                # CORS 관련 헤더 모두 제거
             }
             
             return Response(generate(), headers=headers)
@@ -664,25 +658,14 @@ def proxy_video_stream(s3_key):
         logger.error(f"❌ 비디오 프록시 실패: {s3_key} - {e}")
         return jsonify({'error': '동영상 로드 실패'}), 500
 
-# OPTIONS 요청 처리 (CORS preflight)
-@app.route('/video/<path:s3_key>', methods=['OPTIONS'])
-@app.route('/thumbnail/<path:s3_key>', methods=['OPTIONS'])
-@app.route('/qr/<path:s3_key>', methods=['OPTIONS'])
-def handle_options(s3_key):
-    """CORS preflight 요청 처리"""
-    response = Response()
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Range'
-    response.headers['Access-Control-Expose-Headers'] = 'Content-Range, Accept-Ranges, Content-Length, Content-Type'
-    response.headers['Access-Control-Max-Age'] = '3600'
-    return response
+# OPTIONS 요청 처리 함수 제거 (Flask-CORS가 자동으로 처리)
+# handle_options 함수 완전 제거
 
 @app.route('/file/<path:s3_key>')
 @cache_control(max_age=3600)
 @cross_origin()
 def proxy_generic_file(s3_key):
-    """일반 파일 프록시 (필요시 확장 가능)"""
+    """일반 파일 프록시 (CORS 헤더 중복 제거)"""
     try:
         logger.debug(f"일반 파일 프록시 요청: {s3_key}")
         
@@ -718,8 +701,8 @@ def proxy_generic_file(s3_key):
             mimetype=content_type,
             headers={
                 'Content-Length': str(content_length),
-                'Content-Disposition': f'inline; filename="{os.path.basename(s3_key)}"',
-                'Access-Control-Allow-Origin': '*'
+                'Content-Disposition': f'inline; filename="{os.path.basename(s3_key)}"'
+                # Access-Control-Allow-Origin 헤더 제거
             }
         )
         
@@ -1375,11 +1358,11 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('DEBUG', 'false').lower() == 'true'
     
-    logger.info(f"🚀 Railway 하이브리드 서버 시작 (CORS 활성화)")
+    logger.info(f"🚀 Railway 하이브리드 서버 시작 (CORS 개선)")
     logger.info(f"🔗 Branch.io 도메인: {BRANCH_DOMAIN}")
     logger.info(f"🌐 커스텀 도메인: {CUSTOM_DOMAIN or '미설정'}")
     logger.info(f"🔄 프록시 엔드포인트: /qr/, /thumbnail/, /video/, /file/")
     logger.info(f"💾 Wasabi 저장소 + Railway 프록시 = 영구 URL 보장")
-    logger.info(f"✅ CORS 설정: 모든 도메인 허용 (개발 환경)")
+    logger.info(f"✅ CORS 설정: Flask-CORS로 중앙 관리 (중복 헤더 제거)")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
